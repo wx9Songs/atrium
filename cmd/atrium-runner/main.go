@@ -6,7 +6,9 @@
 // posts the agent's output back as events.
 //
 // It can start exactly two programs, `claude` and `codex`, in their
-// non-interactive modes. It has no general "run this command" ability.
+// non-interactive modes. It has no general "run this command" ability unless
+// the machine's own config sets "allow_shell": true, which turns on the page's
+// Terminal and Files panels for this machine.
 package main
 
 import (
@@ -40,6 +42,11 @@ type Config struct {
 	// Extra places to look for session files, besides $CLAUDE_CONFIG_DIR / ~/.claude and $CODEX_HOME / ~/.codex.
 	ClaudeDirs []string `json:"claude_dirs,omitempty"`
 	CodexHomes []string `json:"codex_homes,omitempty"`
+	// AllowShell turns on the page's Terminal panel (a login shell on this
+	// machine) and its Files panel (browse, read and save files). Off unless
+	// you turn it on here: without it the runner can only ever start `claude`
+	// and `codex`, and reads nothing but folder names for the new-session picker.
+	AllowShell bool `json:"allow_shell,omitempty"`
 }
 
 type Job struct {
@@ -50,7 +57,14 @@ type Job struct {
 	Prompt   string `json:"prompt"`
 	Mode     string `json:"mode"`
 	Model    string `json:"model"`
+	Effort   string `json:"effort"` // reasoning effort, in the agent\'s own words ("high", "xhigh"…); empty = its default
 	IsNew    bool   `json:"is_new"`
+	// Fork continues a copy of session NativeID instead of the session itself,
+	// so the original transcript is left alone. With ForkBefore*, the copy ends
+	// just before that user message (edit a message, try an answer again).
+	Fork           bool   `json:"fork"`
+	ForkBeforeTS   string `json:"fork_before_ts"`
+	ForkBeforeText string `json:"fork_before_text"`
 }
 
 type outEvent struct {
@@ -68,8 +82,11 @@ type Runner struct {
 
 	mu    sync.Mutex
 	procs map[string]*proc
+	terms map[string]*term
+	caps  map[string]string // agent -> last capability report sent to the hub
 
-	out chan outEvent
+	out  chan outEvent
+	fast chan outEvent // terminal output: its own lane, so typing never waits behind a run's events
 
 	syncMu      sync.Mutex
 	syncRunning bool
@@ -114,11 +131,13 @@ func main() {
 	r := &Runner{
 		cfg: cfg, home: home, boot: hex.EncodeToString(bb),
 		hc:    &http.Client{Timeout: 60 * time.Second},
-		procs: map[string]*proc{},
-		out:   make(chan outEvent, 8192),
+		procs: map[string]*proc{}, terms: map[string]*term{}, caps: map[string]string{},
+		out:  make(chan outEvent, 8192),
+		fast: make(chan outEvent, 1024),
 	}
 	log.Printf("atrium-runner %s, hub %s", version, cfg.Hub)
-	go r.flusher()
+	go r.flusher(r.out, 120*time.Millisecond)
+	go r.flusher(r.fast, 5*time.Millisecond)
 	r.loop()
 }
 
@@ -162,6 +181,7 @@ func (r *Runner) request(method, path string, body any, out any, timeout time.Du
 func (r *Runner) loop() {
 	needHello := true
 	lastHello := time.Time{}
+	lastProbe := time.Time{}
 	fail := 0
 	for {
 		if needHello || time.Since(lastHello) > 10*time.Minute {
@@ -177,6 +197,10 @@ func (r *Runner) loop() {
 				log.Printf("connected to hub")
 			}
 			needHello, lastHello, fail = false, time.Now(), 0
+			if time.Since(lastProbe) > 6*time.Hour {
+				lastProbe = time.Now()
+				go r.probeCaps()
+			}
 		}
 		var res struct {
 			Commands []json.RawMessage `json:"commands"`
@@ -188,7 +212,12 @@ func (r *Runner) loop() {
 			continue
 		}
 		for _, raw := range res.Commands {
-			go r.handle(raw)
+			// Keystrokes must reach the terminal in the order they were typed.
+			if bytes.Contains(raw, []byte(`"type":"term_`)) {
+				r.handle(raw)
+			} else {
+				go r.handle(raw)
+			}
 		}
 	}
 }
@@ -205,15 +234,19 @@ func (r *Runner) emit(runID, t string, data any) {
 	r.out <- outEvent{RunID: runID, T: t, TS: time.Now().UnixMilli(), Data: data}
 }
 
+func (r *Runner) emitFast(id, t string, data any) {
+	r.fast <- outEvent{RunID: id, T: t, TS: time.Now().UnixMilli(), Data: data}
+}
+
 // flusher sends events in order, in small batches, retrying until the hub takes them.
-func (r *Runner) flusher() {
+func (r *Runner) flusher(ch chan outEvent, gather time.Duration) {
 	for {
-		batch := []outEvent{<-r.out}
-		timer := time.NewTimer(120 * time.Millisecond)
+		batch := []outEvent{<-ch}
+		timer := time.NewTimer(gather)
 	collect:
 		for len(batch) < 100 {
 			select {
-			case e := <-r.out:
+			case e := <-ch:
 				batch = append(batch, e)
 			case <-timer.C:
 				break collect
@@ -279,14 +312,28 @@ func (r *Runner) hello() error {
 	for id := range r.procs {
 		active = append(active, id)
 	}
+	terms := make([]string, 0, len(r.terms))
+	for id := range r.terms {
+		terms = append(terms, id)
+	}
 	r.mu.Unlock()
 	body := map[string]any{
 		"boot": r.boot, "version": version, "os": runtime.GOOS, "arch": runtime.GOARCH,
 		"hostname": host, "home": r.home, "user": uname, "active": active,
 		"agents": map[string]any{"claude": agentInfo("claude"), "codex": agentInfo("codex")},
 		"stores": map[string]any{"claude": r.claudeStores(), "codex": r.codexHomes()},
+		"shell":  r.cfg.AllowShell,
+		"terms":  terms,
+		// What this runner understands, so the page only offers what will work.
+		"features": []string{"fork", "caps", "term", "files", "effort"},
 	}
-	return r.request("POST", "/api/runner/hello", body, nil, 30*time.Second)
+	if err := r.request("POST", "/api/runner/hello", body, nil, 30*time.Second); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.caps = map[string]string{} // a restarted hub has forgotten them: report again
+	r.mu.Unlock()
+	return nil
 }
 
 // ---------- commands ----------
@@ -303,6 +350,13 @@ func (r *Runner) handle(raw json.RawMessage) {
 		Always    bool            `json:"always"`
 		Input     json.RawMessage `json:"input"`
 		Path      string          `json:"path"`
+		TermID    string          `json:"term_id"`
+		Cwd       string          `json:"cwd"`
+		Cols      int             `json:"cols"`
+		Rows      int             `json:"rows"`
+		Data      string          `json:"data"`
+		Content   string          `json:"content"`
+		Mtime     int64           `json:"mtime"`
 	}
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return
@@ -323,6 +377,26 @@ func (r *Runner) handle(raw json.RawMessage) {
 		}
 	case "ls":
 		data, err := r.ls(c.Path)
+		r.reply(c.ID, data, err)
+	case "caps":
+		r.probeCaps()
+		r.reply(c.ID, map[string]any{"ok": true}, nil)
+	case "term_open":
+		r.termOpen(c.TermID, c.Cwd, c.Cols, c.Rows)
+	case "term_in":
+		r.termInput(c.TermID, c.Data)
+	case "term_resize":
+		r.termResize(c.TermID, c.Cols, c.Rows)
+	case "term_close":
+		r.termClose(c.TermID)
+	case "fs_list":
+		data, err := r.fsList(c.Path)
+		r.reply(c.ID, data, err)
+	case "fs_read":
+		data, err := r.fsRead(c.Path)
+		r.reply(c.ID, data, err)
+	case "fs_write":
+		data, err := r.fsWrite(c.Path, c.Content, c.Mtime)
 		r.reply(c.ID, data, err)
 	}
 }

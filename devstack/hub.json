@@ -1,0 +1,21 @@
+{
+  "listen": "127.0.0.1:8791",
+  "archive_url": "http://127.0.0.1:8792",
+  "cookie_secret": "dev-only-secret",
+  "dev_no_auth": true,
+  "machines": {
+    "dev": {
+      "token_hash": "4665d6d3124501e992d725db75afbbdaf11ddbed58ad58e2ac6f94d2ae1b0a2e"
+    },
+    "gpu-a": {
+      "token_hash": "x"
+    }
+  },
+  "labels": {
+    "dev": "MacBook",
+    "mac2": "Mac 2",
+    "gpu-a": "GPU 服务器 A",
+    "gpu-b": "GPU 服务器 B",
+    "macbook-old": "旧 MacBook"
+  }
+}

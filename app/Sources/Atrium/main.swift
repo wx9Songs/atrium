@@ -62,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         window.center()
         window.setFrameAutosaveName("AtriumMain")
         window.makeKeyAndOrderFront(nil)
+        layoutWindowButtons()
 
         let center = UNUserNotificationCenter.current()
         center.delegate = self
@@ -79,6 +80,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     @objc func load() {
         webView.load(URLRequest(url: serverURL()))
+    }
+
+    // MARK: window chrome
+
+    /// The page draws its own 52pt header across the top of the window. The
+    /// close / minimise / zoom buttons are moved down to sit centred in it.
+    let headerHeight: CGFloat = 52
+
+    func layoutWindowButtons() {
+        guard !window.styleMask.contains(.fullScreen),
+              let close = window.standardWindowButton(.closeButton),
+              let mini = window.standardWindowButton(.miniaturizeButton),
+              let zoom = window.standardWindowButton(.zoomButton),
+              let container = close.superview?.superview else { return }
+        var f = container.frame
+        f.size.height = headerHeight
+        f.origin.y = window.frame.height - headerHeight
+        container.frame = f
+        let y = (headerHeight - close.frame.height) / 2
+        for (i, button) in [close, mini, zoom].enumerated() {
+            button.setFrameOrigin(NSPoint(x: 18 + CGFloat(i) * 20, y: y))
+        }
+    }
+
+    func windowDidResize(_ notification: Notification) { layoutWindowButtons() }
+    func windowDidBecomeKey(_ notification: Notification) { layoutWindowButtons() }
+    func windowDidEnterFullScreen(_ notification: Notification) { tellPage(fullScreen: true) }
+    func windowDidExitFullScreen(_ notification: Notification) {
+        tellPage(fullScreen: false)
+        layoutWindowButtons()
+    }
+
+    /// In full screen there are no window buttons to leave room for.
+    func tellPage(fullScreen: Bool) {
+        webView.evaluateJavaScript("document.documentElement.classList.toggle('fullscreen', \(fullScreen))", completionHandler: nil)
+    }
+
+    /// Menu commands the page carries out itself (it listens for the same event from its own shortcuts).
+    @objc func pageCommand(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('atrium:cmd', {detail: '\(name)'}))", completionHandler: nil)
     }
 
     @objc func reload() {
@@ -102,6 +144,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         appItem.submenu = appMenu
         main.addItem(appItem)
 
+        func command(_ title: String, _ name: String, _ key: String, shift: Bool = false) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: #selector(pageCommand(_:)), keyEquivalent: key)
+            item.representedObject = name
+            if shift { item.keyEquivalentModifierMask = [.command, .shift] }
+            return item
+        }
+
+        let fileItem = NSMenuItem()
+        let file = NSMenu(title: L("文件", "File"))
+        file.addItem(command(L("新会话", "New Session"), "new", "n"))
+        file.addItem(command(L("搜索…", "Search…"), "search", "k"))
+        file.addItem(.separator())
+        file.addItem(command(L("从这里分叉", "Fork from Here"), "fork", "f", shift: true))
+        fileItem.submenu = file
+        main.addItem(fileItem)
+
         // Without an Edit menu, ⌘C / ⌘V / ⌘A do not reach the page.
         let editItem = NSMenuItem()
         let edit = NSMenu(title: L("编辑", "Edit"))
@@ -117,6 +175,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let viewItem = NSMenuItem()
         let view = NSMenu(title: L("显示", "View"))
+        view.addItem(command(L("显示 / 收起侧栏", "Toggle Sidebar"), "sidebar", "b"))
+        view.addItem(command(L("边聊", "Side Chat"), "side", "."))
+        view.addItem(command(L("终端", "Terminal"), "terminal", "j"))
+        view.addItem(command(L("文件", "Files"), "files", "e"))
+        view.addItem(.separator())
         view.addItem(withTitle: L("重新载入", "Reload"), action: #selector(reload), keyEquivalent: "r")
         view.addItem(withTitle: L("回到首页", "Home"), action: #selector(load), keyEquivalent: "0")
         view.addItem(.separator())
@@ -259,6 +322,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 autoSignInTried = true
                 signIn(userInitiated: false)
             }
+        case "drag":
+            // The page's header stands in for the title bar: dragging it moves the window.
+            if let e = NSApp.currentEvent, e.type == .leftMouseDown || e.type == .leftMouseDragged {
+                window.performDrag(with: e)
+            }
+        case "zoom":
+            window.zoom(nil)
         case "badge":
             let n = m["count"] as? Int ?? 0
             NSApp.dockTile.badgeLabel = n > 0 ? String(n) : nil
@@ -308,6 +378,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         checkSignedIn()
+        tellPage(fullScreen: window.styleMask.contains(.fullScreen))
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
@@ -319,9 +390,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let html = """
         <html><head><meta charset="utf-8"><style>
         body{font:15px -apple-system,'PingFang SC',sans-serif;display:grid;place-items:center;height:100vh;margin:0;
-        background:\(dark ? "#1e1f22" : "#f7f6f3");color:\(dark ? "#e7e6e2" : "#1f2328")}
+        background:\(dark ? "#1b1c1f" : "#f6f5f1");color:\(dark ? "#e9e7e2" : "#1c1d21")}
         div{max-width:440px;text-align:center;line-height:1.7} p{color:#8a919b;font-size:13px}
-        button{font:inherit;padding:7px 18px;border-radius:9px;border:0;background:#3b5bdb;color:#fff;margin-top:8px}
+        button{font:inherit;padding:7px 18px;border-radius:9px;border:0;background:#4f58d8;color:#fff;margin-top:8px}
         code{font:12px ui-monospace,Menlo,monospace}
         </style></head><body><div>
         <h3>\(L("连不上 Atrium", "Cannot reach Atrium"))</h3>

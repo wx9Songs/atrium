@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +20,7 @@ type Machine struct {
 	Name      string
 	LastSeen  time.Time
 	Info      json.RawMessage
+	Caps      map[string]json.RawMessage // per agent: slash commands and models, as its CLI reports them
 	queue     []json.RawMessage
 	wake      chan struct{}
 	wasOnline bool
@@ -37,14 +40,81 @@ type Machines struct {
 	m        map[string]*Machine
 	pending  map[string]chan rpcReply
 	reloaded time.Time
+	capsPath string
 }
 
-func newMachines(cfg *Config) *Machines {
-	ms := &Machines{cfg: cfg, m: map[string]*Machine{}, pending: map[string]chan rpcReply{}}
+func newMachines(cfg *Config, capsPath string) *Machines {
+	ms := &Machines{cfg: cfg, m: map[string]*Machine{}, pending: map[string]chan rpcReply{}, capsPath: capsPath}
+	saved := map[string]map[string]json.RawMessage{}
+	if b, err := os.ReadFile(capsPath); err == nil {
+		json.Unmarshal(b, &saved)
+	}
 	for name := range cfg.Machines {
-		ms.m[name] = &Machine{Name: name, wake: make(chan struct{}, 1)}
+		ms.m[name] = &Machine{Name: name, wake: make(chan struct{}, 1), Caps: saved[name]}
 	}
 	return ms
+}
+
+// setCaps stores what an agent on a machine offers (kept across restarts, so
+// the "/" menu is complete before the first run) and reports whether it changed.
+func (ms *Machines) setCaps(name string, data json.RawMessage) bool {
+	var d struct {
+		Agent string `json:"agent"`
+	}
+	if json.Unmarshal(data, &d) != nil || d.Agent == "" || len(data) > 256<<10 {
+		return false
+	}
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	m := ms.m[name]
+	if m == nil || bytes.Equal(m.Caps[d.Agent], data) {
+		return false
+	}
+	if m.Caps == nil {
+		m.Caps = map[string]json.RawMessage{}
+	}
+	m.Caps[d.Agent] = data
+	all := map[string]map[string]json.RawMessage{}
+	for n, x := range ms.m {
+		if len(x.Caps) > 0 {
+			all[n] = x.Caps
+		}
+	}
+	if b, err := json.Marshal(all); err == nil {
+		writeFileAtomic(ms.capsPath, b, 0o600)
+	}
+	return true
+}
+
+// allowsShell tells whether the machine's runner said its terminal is on.
+func (ms *Machines) allowsShell(name string) bool {
+	return ms.hello(name).Shell
+}
+
+// supports tells whether the machine's runner understands a newer command.
+// A runner from before forks existed would quietly drop the "fork" part of a
+// job and write into the original session, so the hub must not send it one.
+func (ms *Machines) supports(name, feature string) bool {
+	for _, f := range ms.hello(name).Features {
+		if f == feature {
+			return true
+		}
+	}
+	return false
+}
+
+type helloInfo struct {
+	Shell    bool     `json:"shell"`
+	Features []string `json:"features"`
+}
+
+func (ms *Machines) hello(name string) (info helloInfo) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	if m := ms.m[name]; m != nil {
+		json.Unmarshal(m.Info, &info)
+	}
+	return
 }
 
 const onlineWindow = 50 * time.Second
@@ -246,12 +316,13 @@ func (ms *Machines) presenceChanged() bool {
 }
 
 type MachineView struct {
-	Name     string          `json:"name"`
-	Label    string          `json:"label"`
-	Runner   bool            `json:"runner"`
-	Online   bool            `json:"online"`
-	LastSeen int64           `json:"last_seen,omitempty"`
-	Info     json.RawMessage `json:"info,omitempty"`
+	Name     string                     `json:"name"`
+	Label    string                     `json:"label"`
+	Runner   bool                       `json:"runner"`
+	Online   bool                       `json:"online"`
+	LastSeen int64                      `json:"last_seen,omitempty"`
+	Info     json.RawMessage            `json:"info,omitempty"`
+	Caps     map[string]json.RawMessage `json:"caps,omitempty"`
 }
 
 // machineList merges machines that have a runner with machines that only
@@ -268,7 +339,7 @@ func (s *Server) machineList(ctx context.Context) []MachineView {
 		return n
 	}
 	for name, m := range ms.m {
-		v := MachineView{Name: name, Label: label(name), Runner: true, Info: m.Info,
+		v := MachineView{Name: name, Label: label(name), Runner: true, Info: m.Info, Caps: m.Caps,
 			Online: time.Since(m.LastSeen) < onlineWindow}
 		if !m.LastSeen.IsZero() {
 			v.LastSeen = m.LastSeen.UnixMilli()

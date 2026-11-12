@@ -167,3 +167,47 @@ export function resumeCommand(s: Session): string {
   const cd = s.cwd ? `cd ${JSON.stringify(s.cwd)} && ` : ''
   return s.agent === 'codex' ? `${cd}codex resume ${s.nid}` : `${cd}claude --resume ${s.nid}`
 }
+
+// ---------- what a machine can do ----------
+
+export const clipText = (s: string, n: number) => {
+  const x = s.replace(/\s+/g, ' ').trim()
+  return x.length > n ? x.slice(0, n) + '…' : x
+}
+
+/** The runner on this machine understands forks (older runners do not). */
+export const canFork = (m?: Machine) => !!m?.runner && Array.isArray(m.info?.features) && m.info.features.includes('fork')
+
+/** The runner on this machine says it understands a newer feature (older runners do not list any). */
+export const hasFeature = (m: Machine | undefined, f: string) => !!m?.runner && Array.isArray(m.info?.features) && m.info.features.includes(f)
+
+/** The runner on this machine has its terminal and files switched on. */
+export const hasShell = (m?: Machine) => !!m?.runner && m.info?.shell === true
+
+export type ModelChoice = { value: string; label: string; hint?: string; efforts: string[] }
+
+/**
+ * Models offered for an agent on a machine. The list is the one that agent's
+ * own CLI reports there (so it matches the install and the account); until a
+ * machine has reported, a short built-in list stands in. The first entry is
+ * always "whatever that machine is set to".
+ */
+export function modelChoices(m: Machine | undefined, agent: string): { choices: ModelChoice[]; reported: boolean } {
+  const caps = m?.caps?.[agent]
+  const list = caps?.models || []
+  if (list.length) {
+    const own = list.find((x) => x.value === 'default')
+    const dflt = own || list.find((x) => x.value === caps?.default_model)
+    const hint = own?.description || [caps?.default_model && (dflt?.name || caps.default_model), caps?.default_effort].filter(Boolean).join(' · ') || tr('用那台机器上的设置', "Whatever that machine is set to")
+    return {
+      reported: true,
+      choices: [
+        { value: '', label: tr('默认', 'Default'), hint, efforts: dflt?.efforts || [] },
+        ...list.filter((x) => x.value && x.value !== 'default').map((x) => ({ value: x.value, label: x.name || x.value, hint: x.description, efforts: x.efforts || [] })),
+      ],
+    }
+  }
+  const def: ModelChoice = { value: '', label: tr('默认', 'Default'), hint: tr('用那台机器上的设置', "Whatever that machine is set to"), efforts: [] }
+  if (agent === 'claude') return { reported: false, choices: [def, ...['opus', 'sonnet', 'haiku'].map((v) => ({ value: v, label: v[0].toUpperCase() + v.slice(1), efforts: [] }))] }
+  return { reported: false, choices: [def] }
+}

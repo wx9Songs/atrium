@@ -271,7 +271,9 @@ func (p *proc) runClaude() error {
 	}
 	env := os.Environ()
 	cwd := job.Cwd
-	if !job.IsNew {
+	resume := !job.IsNew
+	cutAt := "" // with a fork: keep the copy up to and including this assistant message
+	if resume {
 		if job.NativeID == "" {
 			return bi("缺少会话 ID", "Missing session ID")
 		}
@@ -281,6 +283,16 @@ func (p *proc) runClaude() error {
 		}
 		if c := claudeCwd(file); c != "" {
 			cwd = c
+		}
+		if job.Fork && (job.ForkBeforeTS != "" || job.ForkBeforeText != "") {
+			at, found := claudeCut(file, job.ForkBeforeTS, job.ForkBeforeText)
+			if !found {
+				return bi("在这台机器的记录里找不到要改写的那条消息（它可能还没写入，或者会话被压缩过）", "That message was not found in this machine's transcript (it may not be written yet, or the session was compacted)")
+			}
+			if at == "" {
+				resume = false // nothing before it: this is simply a new session in the same folder
+			}
+			cutAt = at
 		}
 		store = r.usableClaudeStore(file, store)
 		if store == filepath.Join(r.home, ".claude") {
@@ -293,8 +305,14 @@ func (p *proc) runClaude() error {
 		return bif("工作目录不存在：%s", "The working directory does not exist: %s", cwd)
 	}
 	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio"}
-	if !job.IsNew {
+	if resume {
 		args = append(args, "--resume", job.NativeID)
+		if job.Fork {
+			args = append(args, "--fork-session")
+			if cutAt != "" {
+				args = append(args, "--resume-session-at", cutAt)
+			}
+		}
 	}
 	switch job.Mode {
 	case "ask":
@@ -308,6 +326,9 @@ func (p *proc) runClaude() error {
 	}
 	if job.Model != "" {
 		args = append(args, "--model", job.Model)
+	}
+	if job.Effort != "" {
+		args = append(args, "--effort", job.Effort)
 	}
 
 	gotResult := false
@@ -324,6 +345,14 @@ func (p *proc) runClaude() error {
 
 	onLine := func(m map[string]any) {
 		switch str(m, "type") {
+		case "control_response":
+			// The answer to "initialize" lists this install's slash commands and models.
+			resp, _ := m["response"].(map[string]any)
+			if resp != nil && str(resp, "request_id") == "init_"+job.ID {
+				if inner, _ := resp["response"].(map[string]any); inner != nil {
+					r.reportCaps("claude", claudeCaps(inner))
+				}
+			}
 		case "control_request":
 			req, _ := m["request"].(map[string]any)
 			id := str(m, "request_id")
@@ -450,6 +479,162 @@ func (p *proc) answer(reqID, behavior, message string, always bool, input json.R
 	}
 	p.write(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": reqID, "response": resp}})
 	p.r.emit(p.job.ID, "permission_done", map[string]any{"request_id": reqID})
+}
+
+// claudeCut finds where a fork should end: just before the user message sent
+// at beforeTS (or, failing that, the last one with that text). It returns the
+// id of the last assistant message before it ("" when the message is the first
+// of the session). The page only knows messages by time and text, the CLI
+// wants a transcript id, so the transcript on this machine is the translator.
+func claudeCut(file, beforeTS, beforeText string) (assistantID string, found bool) {
+	f, err := os.Open(file)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	type entry struct {
+		Type        string `json:"type"`
+		UUID        string `json:"uuid"`
+		Timestamp   string `json:"timestamp"`
+		IsSidechain bool   `json:"isSidechain"`
+		IsMeta      bool   `json:"isMeta"`
+		Message     struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	want, wantOK := time.Time{}, false
+	if t, err := time.Parse(time.RFC3339Nano, beforeTS); err == nil {
+		want, wantOK = t, true
+	}
+	wantText := squash(beforeText)
+	lastAssistant := ""
+	byText, byTextFound := "", false
+	rd := bufio.NewReaderSize(f, 1<<16)
+	for {
+		line, err := rd.ReadBytes('\n')
+		if len(line) > 2 {
+			var e entry
+			if json.Unmarshal(line, &e) == nil && !e.IsSidechain && e.UUID != "" {
+				switch e.Type {
+				case "assistant":
+					lastAssistant = e.UUID
+				case "user":
+					text, isPrompt := promptText(e.Message.Content)
+					if !isPrompt || e.IsMeta {
+						break
+					}
+					if wantOK {
+						if t, err := time.Parse(time.RFC3339Nano, e.Timestamp); err == nil && t.Sub(want).Abs() <= time.Millisecond {
+							return lastAssistant, true
+						}
+					}
+					if got := squash(text); wantText != "" && (got == wantText ||
+						(len(wantText) >= 40 && strings.HasPrefix(got, wantText)) || (len(got) >= 40 && strings.HasPrefix(wantText, got))) {
+						byText, byTextFound = lastAssistant, true // keep going: the last match wins
+					}
+				}
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	return byText, byTextFound
+}
+
+// promptText returns the text of a user entry, and false for entries that are
+// tool results rather than something the person typed.
+func promptText(content json.RawMessage) (string, bool) {
+	var s string
+	if json.Unmarshal(content, &s) == nil {
+		return s, true
+	}
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(content, &parts) != nil {
+		return "", false
+	}
+	var sb strings.Builder
+	for _, p := range parts {
+		switch p.Type {
+		case "tool_result":
+			return "", false
+		case "text":
+			sb.WriteString(p.Text)
+		}
+	}
+	return sb.String(), sb.Len() > 0
+}
+
+func squash(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// claudeCaps keeps the parts of the CLI's "initialize" answer the page uses:
+// slash commands (for the "/" menu) and models (for the model picker).
+func claudeCaps(resp map[string]any) map[string]any {
+	out := map[string]any{}
+	if list, _ := resp["commands"].([]any); len(list) > 0 {
+		cmds := make([]any, 0, len(list))
+		for _, x := range list {
+			c, _ := x.(map[string]any)
+			if c == nil || str(c, "name") == "" || strings.HasPrefix(str(c, "name"), "__") {
+				continue
+			}
+			cmds = append(cmds, map[string]any{"name": str(c, "name"), "description": clipRunes(str(c, "description"), 140), "hint": clipRunes(str(c, "argumentHint"), 60)})
+			if len(cmds) >= 300 {
+				break
+			}
+		}
+		out["commands"] = cmds
+	}
+	if list, _ := resp["models"].([]any); len(list) > 0 {
+		models := make([]any, 0, len(list))
+		for _, x := range list {
+			c, _ := x.(map[string]any)
+			if c == nil || str(c, "value") == "" {
+				continue
+			}
+			efforts := []string{}
+			if list, _ := c["supportedEffortLevels"].([]any); c["supportsEffort"] == true {
+				for _, e := range list {
+					if s, ok := e.(string); ok {
+						efforts = append(efforts, s)
+					}
+				}
+			}
+			models = append(models, map[string]any{"value": str(c, "value"), "name": clipRunes(str(c, "displayName"), 60), "description": clipRunes(str(c, "description"), 120), "efforts": efforts})
+		}
+		out["models"] = models
+	}
+	return out
+}
+
+func clipRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
+
+// reportCaps tells the hub what an agent on this machine offers, once per change.
+func (r *Runner) reportCaps(agent string, caps map[string]any) {
+	if len(caps) == 0 {
+		return
+	}
+	caps["agent"] = agent
+	b, err := json.Marshal(caps)
+	if err != nil {
+		return
+	}
+	r.mu.Lock()
+	same := r.caps[agent] == string(b)
+	r.caps[agent] = string(b)
+	r.mu.Unlock()
+	if !same {
+		r.emit("", "caps", caps)
+	}
 }
 
 // slimClaude keeps what the page renders and drops bulky extras
@@ -599,6 +784,9 @@ func (p *proc) runCodex() error {
 		if job.NativeID == "" {
 			return bi("缺少会话 ID", "Missing session ID")
 		}
+		if job.Fork && (job.ForkBeforeTS != "" || job.ForkBeforeText != "") {
+			return bi("Codex 只能从会话末尾分叉，不能从中间某条消息改写", "Codex can only fork from the end of a session, not from a message in the middle")
+		}
 		file, home := r.findCodexSession(job.NativeID)
 		if file == "" {
 			return bi("在这台机器上找不到这个会话的记录文件（可能已被清理，或者它是在别的机器上产生的）", "This session's transcript is not on this machine (it may have been cleaned up, or it was made on another machine)")
@@ -610,12 +798,18 @@ func (p *proc) runCodex() error {
 			env = setEnv(env, "CODEX_HOME", home)
 		}
 		args = []string{"exec", "resume", "--json", "--skip-git-repo-check"}
+		if job.Fork {
+			args[1] = "fork" // same arguments, new thread id; the original rollout is untouched
+		}
 		if sandbox != "" {
 			args = append(args, "-c", fmt.Sprintf("sandbox_mode=%q", sandbox))
 		}
 	}
 	if job.Model != "" {
 		args = append(args, "-m", job.Model)
+	}
+	if job.Effort != "" {
+		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", job.Effort))
 	}
 	args = append(args, "--")
 	if !job.IsNew {

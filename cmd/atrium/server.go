@@ -26,12 +26,13 @@ import (
 var webFS embed.FS
 
 type Server struct {
-	cfg  *Config
-	arc  *Archive
-	meta *MetaStore
-	runs *RunStore
-	mach *Machines
-	bus  *Bus
+	cfg   *Config
+	arc   *Archive
+	meta  *MetaStore
+	runs  *RunStore
+	mach  *Machines
+	terms *Terms
+	bus   *Bus
 
 	loginMu  sync.Mutex
 	loginHit []time.Time
@@ -39,12 +40,13 @@ type Server struct {
 
 func newServer(cfg *Config) *Server {
 	s := &Server{
-		cfg:  cfg,
-		arc:  newArchive(cfg.ArchiveURL, cfg.ArchiveToken),
-		meta: newMetaStore(filepath.Join(cfg.dataDir(), "meta.json")),
-		runs: newRunStore(filepath.Join(cfg.dataDir(), "runs")),
-		mach: newMachines(cfg),
-		bus:  newBus(),
+		cfg:   cfg,
+		arc:   newArchive(cfg.ArchiveURL, cfg.ArchiveToken),
+		meta:  newMetaStore(filepath.Join(cfg.dataDir(), "meta.json")),
+		runs:  newRunStore(filepath.Join(cfg.dataDir(), "runs")),
+		mach:  newMachines(cfg, filepath.Join(cfg.dataDir(), "caps.json")),
+		bus:   newBus(),
+		terms: newTerms(),
 	}
 	return s
 }
@@ -70,6 +72,12 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/runs/{id}/permission", b(s.handlePermission))
 	mux.HandleFunc("POST /api/runs/{id}/stop", b(s.handleStop))
 	mux.HandleFunc("POST /api/ls", b(s.handleLs))
+	mux.HandleFunc("POST /api/machines/{name}/caps", b(s.handleCapsRefresh))
+	mux.HandleFunc("GET /api/terms", b(s.handleTermList))
+	mux.HandleFunc("POST /api/terms", b(s.handleTermOpen))
+	mux.HandleFunc("GET /api/terms/{id}", b(s.handleTermGet))
+	mux.HandleFunc("POST /api/terms/{id}/{op}", b(s.handleTermCommand))
+	mux.HandleFunc("POST /api/fs/{op}", b(s.handleFs))
 	mux.HandleFunc("GET /api/events", b(s.handleEvents))
 
 	rn := s.runner

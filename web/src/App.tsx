@@ -1,45 +1,76 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { allSessions, resolveKey } from './derive'
-import { NewSession, SearchPalette } from './Dialogs'
-import { Icon, Spinner } from './icons'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { resolveKey } from './derive'
+import { SearchPalette } from './Dialogs'
+import { Home } from './Home'
+import { Logo, Spinner } from './icons'
 import { SessionView } from './SessionView'
-import { Sidebar } from './Sidebar'
-import { signIn, useStore } from './store'
-import { copyText, ms } from './util'
+import { Sidebar, ThemeChoice } from './Sidebar'
+import { inApp, signIn, tellNative, useStore } from './store'
+import { isMac, Toaster, usePersisted } from './ui'
+import { copyText } from './util'
 import { t } from './i18n'
 
-// Routes live in the hash: #/s/<session id>[?m=<message ordinal>]
+// Routes live in the hash: #/ is the start page, #/s/<session id>[?m=<message ordinal>] a conversation.
 function parseHash(): { key?: string; ord?: number } {
   const m = location.hash.match(/^#\/s\/([^?]+)(?:\?m=(\d+))?/)
   if (!m) return {}
   return { key: decodeURIComponent(m[1]), ord: m[2] !== undefined ? Number(m[2]) : undefined }
 }
 
-function useTheme(): [string, () => void] {
-  const [theme, setTheme] = useState(() => localStorage.getItem('sh.theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
+const systemDark = matchMedia('(prefers-color-scheme: dark)')
+
+function useTheme(): [ThemeChoice, (t: ThemeChoice) => void] {
+  const [choice, setChoice] = useState<ThemeChoice>(() => {
+    const v = localStorage.getItem('sh.theme')
+    return v === 'light' || v === 'dark' ? v : 'system'
+  })
   useEffect(() => {
-    document.documentElement.dataset.theme = theme
-    document.querySelector('meta[name=theme-color]')?.setAttribute('content', theme === 'dark' ? '#191a1c' : '#f7f6f3')
-  }, [theme])
-  return [theme, () => { const t = theme === 'dark' ? 'light' : 'dark'; localStorage.setItem('sh.theme', t); setTheme(t) }]
+    const apply = () => {
+      const theme = choice === 'system' ? (systemDark.matches ? 'dark' : 'light') : choice
+      document.documentElement.dataset.theme = theme
+      document.querySelector('meta[name=theme-color]')?.setAttribute('content', theme === 'dark' ? '#17181b' : '#f6f5f1')
+    }
+    apply()
+    systemDark.addEventListener('change', apply)
+    return () => systemDark.removeEventListener('change', apply)
+  }, [choice])
+  return [choice, (c) => { if (c === 'system') localStorage.removeItem('sh.theme'); else localStorage.setItem('sh.theme', c); setChoice(c) }]
+}
+
+if (inApp) document.documentElement.classList.add('in-app')
+
+// Inside the desktop app the page is the whole window, so its empty header
+// areas (marked data-drag) move the window, as a title bar would.
+if (inApp) {
+  window.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return
+    const el = e.target as HTMLElement
+    if (!el.closest('[data-drag]') || el.closest('button, a, input, textarea, select, h1, .menu, .rename')) return
+    tellNative({ type: e.detail === 2 ? 'zoom' : 'drag' })
+  })
+}
+
+const typing = (e: KeyboardEvent) => {
+  const el = e.target as HTMLElement | null
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
 }
 
 export function App() {
   const authed = useStore((s) => s.authed)
-  const [theme, toggleTheme] = useTheme()
-  if (authed === null) return <div className="splash"><Spinner size={22} /></div>
+  const [theme, setTheme] = useTheme()
+  if (authed === null) return <div className="splash" data-drag><Spinner size={22} /></div>
   if (!authed) return <Login />
-  return <Shell theme={theme} toggleTheme={toggleTheme} />
+  return <Shell theme={theme} setTheme={setTheme} />
 }
 
-function Shell({ theme, toggleTheme }: { theme: string; toggleTheme: () => void }) {
+function Shell({ theme, setTheme }: { theme: ThemeChoice; setTheme: (t: ThemeChoice) => void }) {
   const runs = useStore((s) => s.runs)
-  const sessions = useStore((s) => s.sessions)
-  const loaded = useStore((s) => s.loaded)
-  const machines = useStore((s) => s.machines)
   const [route, setRoute] = useState(parseHash)
-  const [showNew, setShowNew] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
+  const [sidebar, setSidebar] = usePersisted('atrium.sidebar', true)
+  const [homeFocus, setHomeFocus] = useState(0)
+  const sidebarRef = useRef(sidebar)
+  sidebarRef.current = sidebar
 
   useEffect(() => {
     const on = () => setRoute(parseHash())
@@ -50,9 +81,15 @@ function Shell({ theme, toggleTheme }: { theme: string; toggleTheme: () => void 
   const open = useCallback((id: string, ord?: number) => {
     location.hash = `#/s/${encodeURIComponent(id)}${ord !== undefined ? `?m=${ord}` : ''}`
     setShowSearch(false)
-    setShowNew(false)
   }, [])
-  const back = useCallback(() => { location.hash = '#/' }, [])
+  // On a phone the list and the start page share the screen: "new session" brings the start page forward.
+  const [homeUp, setHomeUp] = useState(false)
+  const home = useCallback(() => {
+    location.hash = '#/'
+    setShowSearch(false)
+    setHomeUp(true)
+    setHomeFocus((x) => x + 1)
+  }, [])
 
   // A brand-new session is routed by its run id until it reports its real id.
   const id = route.key ? resolveKey(route.key, runs) : undefined
@@ -61,53 +98,60 @@ function Shell({ theme, toggleTheme }: { theme: string; toggleTheme: () => void 
   }, [route.key, id])
 
   useEffect(() => {
+    const cmd = (c: string) => window.dispatchEvent(new CustomEvent('atrium:cmd', { detail: c }))
     const on = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      // On a Mac the shortcuts are ⌘ only: Ctrl+K, Ctrl+B, Ctrl+J… belong to the shell in the terminal panel.
+      const inTerm = !!(e.target as HTMLElement | null)?.closest?.('.xterm')
+      const mod = isMac ? e.metaKey : e.ctrlKey && !inTerm
+      const k = e.key.toLowerCase()
+      if (mod && k === 'k') {
         e.preventDefault()
         setShowSearch((v) => !v)
+      } else if (mod && (k === 'b' || k === '\\')) {
+        e.preventDefault()
+        setSidebar(!sidebarRef.current)
+      } else if (mod && (k === 'n' || (e.shiftKey && k === 'o'))) {
+        e.preventDefault()
+        home()
+      } else if (mod && k === '.') {
+        e.preventDefault()
+        cmd('side')
+      } else if (mod && k === 'j') {
+        e.preventDefault()
+        cmd('terminal')
+      } else if (mod && k === 'e') {
+        e.preventDefault()
+        cmd('files')
       } else if (e.key === 'Escape') {
         setShowSearch(false)
+      } else if (e.key === '/' && !mod && !e.altKey && !typing(e)) {
+        // "/" anywhere outside a text field jumps to the message box and opens the command menu.
+        e.preventDefault()
+        cmd('slash')
       }
     }
     window.addEventListener('keydown', on)
-    return () => window.removeEventListener('keydown', on)
-  }, [])
-
-  const stats = useMemo(() => {
-    const all = allSessions(sessions, runs)
-    const today = new Date()
-    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
-    return { total: all.length, today: all.filter((s) => ms(s.ended) >= start).length }
-  }, [sessions, runs])
+    // The desktop app's menu bar sends the same commands.
+    const menu = (e: Event) => {
+      const c = (e as CustomEvent).detail
+      if (c === 'new') home()
+      else if (c === 'search') setShowSearch(true)
+      else if (c === 'sidebar') setSidebar(!sidebarRef.current)
+    }
+    window.addEventListener('atrium:cmd', menu)
+    return () => { window.removeEventListener('keydown', on); window.removeEventListener('atrium:cmd', menu) }
+  }, [home, setSidebar])
 
   return (
-    <div className={'app' + (id ? ' has-session' : '')}>
-      <Sidebar currentId={id} onOpen={(sid) => open(sid)} onNew={() => setShowNew(true)} onSearch={() => setShowSearch(true)} theme={theme} onTheme={toggleTheme} />
+    <div className={'app' + (id ? ' has-session' : homeUp ? ' home-up' : '') + (sidebar ? '' : ' no-sidebar')}>
+      {sidebar && <Sidebar currentId={id} onOpen={(sid) => open(sid)} onNew={home} onSearch={() => setShowSearch(true)} theme={theme} onTheme={setTheme} onHide={() => setSidebar(false)} />}
       {id ? (
-        <SessionView key={id} id={id} focusOrd={route.ord} onBack={back} />
+        <SessionView key={id} id={id} focusOrd={route.ord} onBack={home} onOpen={open} onNew={home} onSearch={() => setShowSearch(true)} sidebarHidden={!sidebar} onShowSidebar={() => setSidebar(true)} />
       ) : (
-        <div className="main">
-          <div className="empty">
-            <div className="empty-logo"><span className="logo big" /></div>
-            <div className="empty-title">{t('所有机器上的会话，都在这里', 'Every session, from every machine')}</div>
-            <div className="empty-sub">
-              {loaded ? t(`共 ${stats.total} 个会话，今天有 ${stats.today} 个在更新。`, `${stats.total} sessions, ${stats.today} active today.`) : t('正在加载…', 'Loading…')}
-              <br />{t('从左边选一个继续，或者开始一个新的。', 'Pick one on the left to continue, or start a new one.')}
-            </div>
-            <div className="empty-actions">
-              <button className="btn primary" onClick={() => setShowNew(true)}><Icon name="plus" size={15} />{t('新会话', 'New session')}</button>
-              <button className="btn" onClick={() => setShowSearch(true)}><Icon name="search" size={15} />{t('搜索对话内容', 'Search conversations')}</button>
-            </div>
-            <div className="empty-machines">
-              {machines.filter((m) => m.runner).map((m) => (
-                <span key={m.name} className="mach"><span className={'dot ' + (m.online ? 'on' : 'off')} />{m.label}<i>{m.online ? t('在线', 'online') : t('不在线', 'offline')}</i></span>
-              ))}
-            </div>
-          </div>
-        </div>
+        <Home onOpen={open} onSearch={() => setShowSearch(true)} sidebarHidden={!sidebar} onShowSidebar={() => setSidebar(true)} focusSignal={homeFocus} onBack={() => setHomeUp(false)} />
       )}
-      {showNew && <NewSession onClose={() => setShowNew(false)} onStarted={(key) => open(key)} />}
       {showSearch && <SearchPalette onClose={() => setShowSearch(false)} onOpen={open} />}
+      <Toaster />
     </div>
   )
 }
@@ -134,9 +178,9 @@ function Login() {
     }
   }
   return (
-    <div className="login">
+    <div className="login" data-drag>
       <div className="login-card">
-        <span className="logo big" />
+        <Logo size={48} />
         <h1>{t('Atrium 中庭', 'Atrium')}</h1>
         <p>{hint ? t('这个页面需要先登录。在终端里运行下面这条命令，它会打开已登录的页面：', 'Sign in first. Run this in a terminal; it opens the page signed in:') : t('这个页面需要先登录。在运行 Atrium 的服务器上执行下面这条命令，把它输出的链接在这个浏览器里打开：', 'Sign in first. Run this on the Atrium server and open the link it prints in this browser:')}</p>
         <div className="login-cmd">

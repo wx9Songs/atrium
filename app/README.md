@@ -6,6 +6,8 @@ A small native app around the Atrium page.
 - **Dock badge** with the number of runs waiting for you.
 - **Sign-in without the terminal.** Put the command that prints a sign-in link into Settings (⌘,); the app runs it when you are signed out and opens the link.
 - Its own window, remembered size, ⌘R to reload, ⌘+ / ⌘- to zoom.
+- Menu-bar commands for the page: New Session (⌘N), Search (⌘K), Fork from Here (⇧⌘F), Toggle Sidebar (⌘B), Side Chat (⌘.), Terminal (⌘J), Files (⌘E).
+- The page's header is the title bar: drag it to move the window, double-click it to zoom.
 
 ## Build
 
@@ -13,6 +15,8 @@ A small native app around the Atrium page.
 make app          # or: ./app/build.sh
 open app/dist/Atrium.app
 ```
+
+To try a build next to the installed app without touching its settings, give it another name and identifier: `APP_NAME="Atrium Dev" BUNDLE_ID=dev.atrium.app.dev ./app/build.sh`.
 
 Needs the Xcode command line tools. The result is signed ad hoc for your own machine; it is not notarised, so on another Mac the first launch needs right-click → Open.
 

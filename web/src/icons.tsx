@@ -1,5 +1,6 @@
 // Small stroke icons, drawn inline so the page needs no icon font.
 import { t } from './i18n'
+import logoUrl from './logo.png'
 const P: Record<string, string> = {
   plus: 'M12 5v14M5 12h14',
   search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4',
@@ -37,6 +38,24 @@ const P: Record<string, string> = {
   spark: 'M12 3l1.800 5.200L19 10l-5.200 1.800L12 17l-1.800-5.200L5 10l5.200-1.800z',
   refresh: 'M20 11a8 8 0 0 0-14.500-4M4 4v4h4M4 13a8 8 0 0 0 14.500 4M20 20v-4h-4',
   back: 'M15 6l-6 6 6 6',
+  // sidebar toggle: a window with its left column marked
+  sidebar: 'M4 5h16v14H4zM9.500 5v14',
+  // a second column on the right: the side panel
+  panel: 'M4 5h16v14H4zM14.500 5v14',
+  // fork: one line splitting in two
+  branch: 'M7 4v9M7 13a4 4 0 0 0 4 4h6M7 13V20M14 14l3 3-3 3M5 4h4',
+  // side chat: two overlapping bubbles
+  sidechat: 'M4 5h11v8H9l-3 3v-3H4zM15 9h5v8h-2v3l-3-3h-4v-1',
+  retry: 'M19 12a7 7 0 1 1-2.050-4.950M19 5v4h-4',
+  filter: 'M4 6h16M7 12h10M10 18h4',
+  chip: 'M8 8h8v8H8zM10 4v4M14 4v4M10 16v4M14 16v4M4 10h4M4 14h4M16 10h4M16 14h4',
+  slash: 'M15 5L9 19',
+  keyboard: 'M3 7h18v10H3zM7 10.500h.01M10.500 10.500h.01M14 10.500h.01M17.500 10.500h.01M7.500 13.500h9',
+  trash: 'M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13',
+  external: 'M14 5h5v5M19 5l-8 8M11 6H5v13h13v-6',
+  // widen / narrow the side panel: arrows pushing a divider
+  widen: 'M20 5v14M15 12H4M8 8l-4 4 4 4',
+  narrow: 'M20 5v14M4 12h11M11 8l4 4-4 4',
 }
 
 export function Icon({ name, size = 16, className }: { name: string; size?: number; className?: string }) {
@@ -49,7 +68,7 @@ export function Icon({ name, size = 16, className }: { name: string; size?: numb
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.8}
+      strokeWidth={1.7}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
@@ -63,9 +82,23 @@ export function Spinner({ size = 14 }: { size?: number }) {
   return <span className="spinner" style={{ width: size, height: size }} aria-label={t('运行中', 'running')} />
 }
 
-/** A small coloured tag for the agent, instead of brand logos. */
-export function AgentTag({ agent }: { agent: string }) {
+/**
+ * The Atrium mark: ribbons folded into a ring of rooms around an open court,
+ * with a small sunlit square in the middle. It is the same artwork as the app
+ * icon; app/make-icon.swift writes logo.png from it (see the --flat option).
+ */
+export function Logo({ size = 22 }: { size?: number }) {
+  return <img className="logo" src={logoUrl} width={size} height={size} alt="" draggable={false} />
+}
+
+/** A small coloured dot and name for the agent, instead of brand logos. */
+export function AgentTag({ agent, bare }: { agent: string; bare?: boolean }) {
   const c = agent === 'claude' ? 'claude' : agent === 'codex' ? 'codex' : 'other'
-  const t = agent === 'claude' ? 'Claude' : agent === 'codex' ? 'Codex' : agent
-  return <span className={`agent-tag ${c}`}>{t}</span>
+  const name = agent === 'claude' ? 'Claude' : agent === 'codex' ? 'Codex' : agent
+  return (
+    <span className={`agent-tag ${c}`}>
+      <i />
+      {!bare && name}
+    </span>
+  )
 }

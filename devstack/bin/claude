@@ -1,0 +1,222 @@
+#!/usr/bin/env node
+// A fake `claude` for local development. It speaks the same stream-json
+// protocol the runner uses (initialize, user turn, permission requests,
+// interrupt, --resume / --fork-session / --resume-session-at), writes a
+// transcript in Claude Code's layout and publishes it to the mock archive.
+// It never talks to a model: replies are scripted from the prompt.
+import readline from 'node:readline'
+import { claudeFile, iso, publishClaude, readLines, sleep, uuid, writeLines } from '../lib.mjs'
+
+const argv = process.argv.slice(2)
+if (argv.includes('--version')) {
+  console.log('2.1.308 (Claude Code, dev stand-in)')
+  process.exit(0)
+}
+const flag = (name) => {
+  const i = argv.indexOf(name)
+  return i >= 0 ? argv[i + 1] : undefined
+}
+const resume = flag('--resume')
+const fork = argv.includes('--fork-session')
+const cutAt = flag('--resume-session-at')
+const mode = flag('--permission-mode') || 'bypassPermissions'
+const model = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5' }[flag('--model')] || flag('--model') || 'claude-opus-5-5'
+const effort = flag('--effort') || ''
+const cwd = process.cwd()
+const speed = Number(process.env.FAKE_SPEED || 1)
+
+const out = (v) => process.stdout.write(JSON.stringify(v) + '\n')
+
+// ---------- transcript ----------
+let sid = resume && !fork ? resume : uuid()
+let lines = []
+if (resume) {
+  const src = readLines(claudeFile(resume))
+  if (!src.length) {
+    out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `No conversation found with session ID: ${resume}`, session_id: sid })
+    process.exit(1)
+  }
+  lines = src
+  if (cutAt) {
+    const i = src.findIndex((l) => l.uuid === cutAt)
+    if (i < 0) {
+      out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `No message found with message.uuid of: ${cutAt}`, session_id: sid })
+      process.exit(1)
+    }
+    lines = src.slice(0, i + 1)
+  }
+  lines = lines.map((l) => ({ ...l, sessionId: sid }))
+}
+const file = claudeFile(sid, lines[0]?.cwd || cwd)
+let parent = lines.length ? lines[lines.length - 1].uuid : null
+const add = (type, message, extra = {}) => {
+  const l = { type, uuid: uuid(), parentUuid: parent, sessionId: sid, timestamp: iso(Date.now()), cwd: lines[0]?.cwd || cwd, isSidechain: false, message, ...extra }
+  parent = l.uuid
+  lines.push(l)
+  writeLines(file, lines)
+  return l
+}
+const publish = () => publishClaude(sid, lines[0]?.cwd || cwd)
+
+// ---------- protocol ----------
+const COMMANDS = [
+  ['compact', 'Clear conversation history but keep a summary in context', '<optional custom summarization instructions>'],
+  ['context', 'Show what is using the context window', ''],
+  ['init', 'Initialize a new CLAUDE.md file with codebase documentation', ''],
+  ['review', 'Review a pull request', '[PR number]'],
+  ['code-review', 'Review the current diff for correctness bugs', '[effort] [target]'],
+  ['security-review', 'Complete a security review of the pending changes on the current branch', ''],
+  ['simplify', 'Review the changed code for reuse and simplification, then apply the fixes', ''],
+  ['usage', 'Show plan usage limits', ''],
+  ['recap', 'Summarize what happened in this session so far', ''],
+  ['deploy-staging', 'Project command: build and roll out to the staging box', '[service]'],
+].map(([name, description, argumentHint]) => ({ name, description, argumentHint }))
+const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
+const MODELS = [
+  ['default', 'Default (recommended)', 'Opus 5.5 · Best for everyday, complex tasks', LEVELS],
+  ['opus', 'Opus 5.5', 'Best for everyday, complex tasks', LEVELS],
+  ['claude-fable-5-2', 'Fable 5.2', 'Most capable for your hardest and longest-running tasks', LEVELS],
+  ['sonnet', 'Sonnet 5.5', 'Fast and capable for most coding work', LEVELS],
+  ['haiku', 'Haiku 5.5', 'Fastest for quick answers', LEVELS],
+  ['claude-haiku-4-5-20251001', 'Haiku 4.5', 'Older, fastest', []],
+  ['claude-opus-4-6', 'Opus 4.6', 'Older generation', ['low', 'medium', 'high', 'max']],
+].map(([value, displayName, description, levels]) => ({ value, displayName, description, supportsEffort: levels.length > 0, supportedEffortLevels: levels }))
+
+const pending = new Map()
+let aborted = false
+let abort = () => {}
+const wait = (ms) => Promise.race([sleep(ms / speed), new Promise((r) => { abort = r })])
+
+async function ask(tool, input, description) {
+  const id = 'perm_' + uuid().slice(0, 8)
+  out({ type: 'control_request', request_id: id, request: { subtype: 'can_use_tool', tool_name: tool, input, description, permission_suggestions: [{ type: 'addRules', rules: [{ toolName: tool }], behavior: 'allow', destination: 'session' }] } })
+  return new Promise((res) => pending.set(id, res))
+}
+
+let n = 0
+const say = (blocks) => {
+  const message = { id: 'msg_' + uuid().slice(0, 12), role: 'assistant', model, content: blocks }
+  add('assistant', message)
+  out({ type: 'assistant', message, parent_tool_use_id: null, session_id: sid })
+}
+async function tool(name, input, result, { needsOk = false, error = false, ms = 700 } = {}) {
+  const id = 'toolu_' + uuid().slice(0, 10) + n++
+  say([{ type: 'tool_use', id, name, input }])
+  if (needsOk && (mode === 'default' || (mode === 'acceptEdits' && name === 'Bash'))) {
+    const ans = await ask(name, input, input.description || '')
+    if (ans.behavior !== 'allow') {
+      result = ans.message || 'The user denied this action.'
+      error = true
+    }
+  }
+  if (aborted) return
+  await wait(ms)
+  if (aborted) return
+  const message = { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: result, ...(error ? { is_error: true } : {}) }] }
+  add('user', message)
+  out({ type: 'user', message, parent_tool_use_id: null, session_id: sid })
+}
+
+const history = () => lines.filter((l) => l.type === 'user' && typeof l.message?.content === 'string').map((l) => l.message.content)
+
+async function turn(prompt) {
+  const t0 = Date.now()
+  out({ type: 'system', subtype: 'init', session_id: sid, model, cwd, permissionMode: mode, claude_code_version: '2.1.308', slash_commands: COMMANDS.map((c) => c.name) })
+  add('user', { role: 'user', content: prompt })
+  const done = (result, is_error = false) => {
+    publish()
+    out({ type: 'result', subtype: is_error ? 'error_during_execution' : 'success', is_error, result, duration_ms: Date.now() - t0, total_cost_usd: 0.0421, num_turns: 3, session_id: sid })
+  }
+  await wait(500)
+  if (aborted) return done('')
+  const past = history().slice(0, -1)
+
+  if (/^\/compact/.test(prompt)) {
+    out({ type: 'system', subtype: 'compact_boundary', session_id: sid })
+    lines.push({ type: 'system', subtype: 'compact_boundary', uuid: uuid(), parentUuid: parent, sessionId: sid, timestamp: iso(Date.now()), cwd })
+    say([{ type: 'text', text: 'Compacted. The summary keeps the open questions and the files touched so far.' }])
+    return done('ok')
+  }
+  if (/报错|fail/i.test(prompt)) return done('API Error: 529 overloaded (simulated)', true)
+  if (/回顾|recap|history/i.test(prompt)) {
+    const text = past.length ? '到目前为止，这个会话里你发过这些消息：\n\n' + past.map((p, i) => `${i + 1}. ${p.slice(0, 80)}`).join('\n') : '这是这个会话的第一条消息。'
+    say([{ type: 'text', text }])
+    return done(text)
+  }
+  if (/^(hi|hello|你好|在吗)\b/i.test(prompt) || prompt.length < 12) {
+    await wait(600)
+    const text = `收到：“${prompt}”。（这是开发环境里的假 Claude，模型 \`${model}\`${effort ? '，思考强度 `' + effort + '`' : ''}，权限模式 \`${mode}\`，此前共 ${past.length} 条用户消息。）`
+    say([{ type: 'text', text }])
+    return done(text)
+  }
+
+  say([{ type: 'thinking', thinking: `The user asks: ${prompt.slice(0, 120)}\nI should look at the repository layout first, then make the smallest change that works, then run the tests.` }])
+  await wait(700)
+  if (aborted) return done('')
+  say([{ type: 'text', text: '我先看一下项目结构，再动手。' }])
+  await tool('Bash', { command: 'git status --short && ls', description: 'Check the working tree' }, ' M web/src/App.tsx\n?? notes.md\nMakefile\nREADME.md\ncmd\nweb', { needsOk: true })
+  if (aborted) return done('')
+  await tool('Read', { file_path: cwd + '/web/src/App.tsx' }, "import { useState } from 'react'\n\nexport function App() {\n  const [n, setN] = useState(0)\n  return <button onClick={() => setN(n + 1)}>{n}</button>\n}\n")
+  if (aborted) return done('')
+  await tool('Grep', { pattern: 'useState', path: 'web/src' }, 'web/src/App.tsx:1\nweb/src/Sidebar.tsx:3')
+  if (aborted) return done('')
+  say([{ type: 'text', text: '找到了入口。计数器没有重置的办法，我加一个。' }])
+  await tool('Edit', { file_path: cwd + '/web/src/App.tsx', old_string: '  return <button onClick={() => setN(n + 1)}>{n}</button>', new_string: '  return (\n    <>\n      <button onClick={() => setN(n + 1)}>{n}</button>\n      <button onClick={() => setN(0)}>reset</button>\n    </>\n  )' }, 'The file has been updated.', { needsOk: true })
+  if (aborted) return done('')
+  await tool('TodoWrite', { todos: [{ content: '看项目结构', status: 'completed' }, { content: '加重置按钮', status: 'completed' }, { content: '跑类型检查', status: 'in_progress' }] }, 'Todos updated')
+  if (aborted) return done('')
+  await tool('Bash', { command: 'npx tsc --noEmit', description: 'Type-check' }, /类型错误/.test(prompt) ? "web/src/App.tsx(7,9): error TS2322: Type 'string' is not assignable to type 'number'." : '', { needsOk: true, error: /类型错误/.test(prompt), ms: 1400 })
+  if (aborted) return done('')
+  const text = [
+    '改好了。',
+    '',
+    '## 做了什么',
+    '',
+    '- 在 `web/src/App.tsx` 里加了一个 **reset** 按钮',
+    '- 类型检查通过',
+    '',
+    '```tsx',
+    '<button onClick={() => setN(0)}>reset</button>',
+    '```',
+    '',
+    '| 文件 | 变化 |',
+    '|---|---|',
+    '| `web/src/App.tsx` | +5 −1 |',
+    '',
+    `> 这是开发环境里的假 Claude（模型 \`${model}\`${effort ? '，思考强度 `' + effort + '`' : ''}）。此前这个会话里有 ${past.length} 条用户消息。`,
+  ].join('\n')
+  say([{ type: 'text', text }])
+  done(text)
+}
+
+const rl = readline.createInterface({ input: process.stdin })
+let running = null
+rl.on('line', (line) => {
+  let m
+  try {
+    m = JSON.parse(line)
+  } catch {
+    return
+  }
+  if (m.type === 'control_request' && m.request?.subtype === 'initialize') {
+    out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response: { commands: COMMANDS, models: MODELS, claude_code_version: '2.1.308' } } })
+  } else if (m.type === 'control_request' && m.request?.subtype === 'interrupt') {
+    aborted = true
+    abort()
+    for (const res of pending.values()) res({ behavior: 'deny', message: 'interrupted' })
+    out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id } })
+  } else if (m.type === 'control_response') {
+    const res = pending.get(m.response?.request_id)
+    pending.delete(m.response?.request_id)
+    if (res) res(m.response.response || { behavior: 'deny' })
+  } else if (m.type === 'user' && !running) {
+    const c = m.message?.content
+    running = turn(typeof c === 'string' ? c : (c || []).map((b) => b.text || '').join('')).catch((e) => {
+      out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: String(e), session_id: sid })
+    })
+  }
+})
+rl.on('close', async () => {
+  if (running) await running
+  process.exit(0)
+})

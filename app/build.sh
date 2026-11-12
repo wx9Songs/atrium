@@ -3,9 +3,13 @@
 set -e
 cd "$(dirname "$0")"
 VERSION="${VERSION:-0.1.0}"
+# A second copy for trying things out next to the installed app:
+#   APP_NAME="Atrium Dev" BUNDLE_ID=dev.atrium.app.dev ./app/build.sh
+APP_NAME="${APP_NAME:-Atrium}"
+BUNDLE_ID="${BUNDLE_ID:-dev.atrium.app}"
 swift build -c release 2>&1 | tail -3
 BIN="$(swift build -c release --show-bin-path)/Atrium"
-APP="dist/Atrium.app"
+APP="dist/$APP_NAME.app"
 mkdir -p dist
 [ -d "$APP" ] && mv "$APP" "dist/.old-$$.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -23,9 +27,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>Atrium</string>
-  <key>CFBundleDisplayName</key><string>Atrium</string>
-  <key>CFBundleIdentifier</key><string>dev.atrium.app</string>
+  <key>CFBundleName</key><string>$APP_NAME</string>
+  <key>CFBundleDisplayName</key><string>$APP_NAME</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleExecutable</key><string>Atrium</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>

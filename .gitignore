@@ -8,3 +8,6 @@
 /app/dist/
 /dev/
 .DS_Store
+/devstack/data/
+/devstack/out/
+/devstack/out.log

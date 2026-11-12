@@ -1,7 +1,7 @@
 // One small global store: the session list, hub notes (pin/rename/hide),
 // machines, runs and their live events. Kept fresh by server-sent events.
 import { useSyncExternalStore } from 'react'
-import { api, Machine, Meta, Run, RunEvent, Session, setUnauthorizedHandler } from './api'
+import { api, Machine, Meta, Run, RunEvent, Session, setUnauthorizedHandler, TermEvent } from './api'
 import { t } from './i18n'
 
 export type State = {
@@ -142,6 +142,10 @@ export async function ensureEvents(runId: string, force = false) {
   }
 }
 
+export function setMachines(machines: Machine[]) {
+  set({ machines })
+}
+
 export function putRun(run: Run) {
   set({ runs: { ...state.runs, [run.id]: run }, events: state.events[run.id] ? state.events : { ...state.events, [run.id]: [] } })
 }
@@ -156,13 +160,28 @@ export async function setMeta(id: string, patch: Meta) {
   }
 }
 
+// ---------- terminal ----------
+// Terminal output does not go through the store (it would re-render the page
+// for every keystroke echoed back): each open terminal listens for its own.
+
+const termListeners = new Map<string, Set<(e: TermEvent) => void>>()
+
+export function onTerm(id: string, fn: (e: TermEvent) => void) {
+  let set = termListeners.get(id)
+  if (!set) termListeners.set(id, (set = new Set()))
+  set.add(fn)
+  return () => { set!.delete(fn) }
+}
+
 // ---------- desktop app bridge ----------
 // Inside the Atrium desktop app the page can hand events to the native side
 // (notifications, dock badge). In a normal browser this does nothing.
 
 const nativeBridge = (window as any).webkit?.messageHandlers?.atrium as { postMessage: (m: unknown) => void } | undefined
 
-function tellNative(msg: Record<string, unknown>) {
+export const inApp = !!nativeBridge || localStorage.getItem('atrium.fakeapp') === '1'
+
+export function tellNative(msg: Record<string, unknown>) {
   try {
     nativeBridge?.postMessage(msg)
   } catch {
@@ -236,6 +255,10 @@ function connect() {
     }
     if (!known || isTerminal(d.run)) scheduleSessionsRefresh(isTerminal(d.run) ? 2500 : 400)
   })
+  es.addEventListener('term', (e) => {
+    const d = JSON.parse((e as MessageEvent).data) as TermEvent
+    termListeners.get(d.id)?.forEach((fn) => fn(d))
+  })
   es.addEventListener('sessions', () => scheduleSessionsRefresh())
   es.addEventListener('machines', (e) => set({ machines: JSON.parse((e as MessageEvent).data) }))
   es.addEventListener('meta', (e) => {
@@ -259,3 +282,14 @@ function connect() {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.authed) refreshSessions()
 })
+
+/**
+ * Where the start page should open next: set by "new session here" on a folder
+ * in the sidebar, and used once by the start page.
+ */
+export const startAt = { machine: '', cwd: '' }
+export function startIn(machine: string, cwd: string) {
+  startAt.machine = machine
+  startAt.cwd = cwd
+  window.dispatchEvent(new Event('atrium:start-at'))
+}

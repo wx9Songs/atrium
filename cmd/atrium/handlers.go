@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -152,6 +153,28 @@ func (s *Server) handleRunEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"run": run, "events": ev})
 }
 
+// A reasoning effort is one of the agent's own level names ("low", "xhigh"…): a short word, passed through as is.
+var effortRe = regexp.MustCompile(`^[a-z]{0,16}$`)
+
+var validForkKinds = map[string]bool{"branch": true, "edit": true, "retry": true, "side": true}
+
+// sessionRef finds a session by archive id: in the archive, or, for one
+// started here that the archive has not indexed yet, from its runs.
+func (s *Server) sessionRef(r *http.Request, id string) (Session, bool) {
+	if id == "" {
+		return Session{}, false
+	}
+	if sess, ok := s.arc.Find(r.Context(), id); ok {
+		return sess, true
+	}
+	prev := s.runs.List(func(x *Run) bool { return x.SessionID == id && x.NativeID != "" })
+	if len(prev) == 0 {
+		return Session{}, false
+	}
+	p := prev[len(prev)-1]
+	return Session{ID: p.SessionID, NativeID: p.NativeID, Agent: p.Agent, Machine: p.Machine, Cwd: p.Cwd}, true
+}
+
 var validModes = map[string]bool{"": true, "machine": true, "ask": true, "plan": true, "edits": true, "full": true, "readonly": true}
 
 func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
@@ -163,6 +186,16 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		Prompt    string `json:"prompt"`
 		Mode      string `json:"mode"`
 		Model     string `json:"model"`
+		Effort    string `json:"effort"`
+		// Fork: continue a copy of a session instead of the session itself.
+		Fork *struct {
+			SessionID  string `json:"session_id"`
+			Kind       string `json:"kind"`
+			BeforeTS   string `json:"before_ts"`
+			BeforeText string `json:"before_text"`
+			BeforeOrd  *int   `json:"before_ord"`
+			Title      string `json:"title"`
+		} `json:"fork"`
 	}
 	if err := readJSON(r, &body, 4<<20); err != nil {
 		writeErr(w, 400, "bad request")
@@ -172,15 +205,42 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, L(r, "消息不能为空", "The message is empty"))
 		return
 	}
+	if !effortRe.MatchString(body.Effort) {
+		writeErr(w, 400, "bad effort")
+		return
+	}
 	if !validModes[body.Mode] {
 		writeErr(w, 400, L(r, "未知的权限模式", "Unknown permission mode"))
 		return
 	}
 	run := Run{
-		ID: "r" + randToken(9), Prompt: body.Prompt, Mode: body.Mode, Model: body.Model,
+		ID: "r" + randToken(9), Prompt: body.Prompt, Mode: body.Mode, Model: body.Model, Effort: body.Effort,
 		Status: "queued", Created: time.Now().UnixMilli(),
 	}
-	if body.SessionID != "" {
+	var forkCmd map[string]any
+	if f := body.Fork; f != nil {
+		if !validForkKinds[f.Kind] {
+			writeErr(w, 400, "bad fork kind")
+			return
+		}
+		parent, ok := s.sessionRef(r, f.SessionID)
+		if !ok {
+			writeErr(w, 404, L(r, "找不到这个会话", "Session not found"))
+			return
+		}
+		cut := f.BeforeTS != "" || f.BeforeText != ""
+		if cut && parent.Agent != "claude" {
+			writeErr(w, 400, L(r, "这种会话只能从末尾分叉", "This kind of session can only be forked from its end"))
+			return
+		}
+		run.IsNew, run.ForkOf, run.ForkKind, run.Title = true, parent.ID, f.Kind, clip(f.Title, 120)
+		run.Agent, run.Machine, run.Cwd = parent.Agent, parent.Machine, parent.Cwd
+		if cut {
+			run.ForkOrd = f.BeforeOrd
+		}
+		forkCmd = map[string]any{"native_id": parent.NativeID, "is_new": false, "fork": true,
+			"fork_before_ts": f.BeforeTS, "fork_before_text": clip(f.BeforeText, 400)}
+	} else if body.SessionID != "" {
 		if sess, ok := s.arc.Find(r.Context(), body.SessionID); ok {
 			run.SessionID, run.NativeID, run.Agent, run.Machine, run.Cwd = sess.ID, sess.NativeID, sess.Agent, sess.Machine, sess.Cwd
 		} else {
@@ -221,11 +281,19 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, L(r, "这台机器现在不在线", "This machine is offline"))
 		return
 	}
+	if forkCmd != nil && !s.mach.supports(run.Machine, "fork") {
+		writeErr(w, http.StatusConflict, L(r, "这台机器上的 runner 版本太旧，还不支持分叉。更新 runner 后再试。", "The runner on this machine is too old to fork sessions. Update it and try again."))
+		return
+	}
 	run = s.runs.Create(run)
-	cmd := map[string]any{"id": "c" + randToken(9), "type": "start", "run": map[string]any{
+	job := map[string]any{
 		"id": run.ID, "agent": run.Agent, "native_id": run.NativeID, "cwd": run.Cwd,
-		"prompt": run.Prompt, "mode": run.Mode, "model": run.Model, "is_new": run.IsNew,
-	}}
+		"prompt": run.Prompt, "mode": run.Mode, "model": run.Model, "effort": run.Effort, "is_new": run.IsNew,
+	}
+	for k, v := range forkCmd {
+		job[k] = v
+	}
+	cmd := map[string]any{"id": "c" + randToken(9), "type": "start", "run": job}
 	if err := s.mach.enqueue(run.Machine, cmd); err != nil {
 		zh, en := both(err)
 		run, _, _ = s.runs.Append(run.ID, "exit", time.Now().UnixMilli(), nil, func(x *Run) {
@@ -313,6 +381,20 @@ func (s *Server) finishRun(id, status string, cause error) {
 	}
 }
 
+// handleCapsRefresh asks a machine's runner to read its agents' models and commands again.
+func (s *Server) handleCapsRefresh(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !s.mach.supports(name, "effort") {
+		writeErr(w, http.StatusConflict, L(r, "这台机器上的 runner 版本较旧，还不能读取模型列表", "The runner on this machine is too old to report its models"))
+		return
+	}
+	if _, err := s.mach.rpc(r.Context(), name, map[string]any{"type": "caps"}, 60*time.Second); err != nil {
+		writeErr(w, http.StatusConflict, errText(r, err))
+		return
+	}
+	writeJSON(w, 200, map[string]any{"machines": s.machineList(r.Context())})
+}
+
 func (s *Server) handleLs(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Machine string `json:"machine"`
@@ -342,9 +424,11 @@ func (s *Server) handleRunnerHello(w http.ResponseWriter, r *http.Request) {
 	}
 	var hello struct {
 		Active []string `json:"active"`
+		Terms  []string `json:"terms"`
 	}
 	json.Unmarshal(raw, &hello)
 	s.mach.setInfo(name, raw)
+	s.reconcileTerms(name, hello.Terms)
 	active := map[string]bool{}
 	for _, id := range hello.Active {
 		active[id] = true
@@ -393,7 +477,16 @@ func (s *Server) handleRunnerEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	name := machineOf(r)
 	for _, ev := range body.Events {
-		s.applyRunEvent(name, ev)
+		switch {
+		case ev.T == "caps":
+			if s.mach.setCaps(name, ev.Data) {
+				s.bus.Publish("machines", s.machineList(r.Context()))
+			}
+		case strings.HasPrefix(ev.T, "term_"):
+			s.applyTermEvent(name, ev)
+		default:
+			s.applyRunEvent(name, ev)
+		}
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -483,8 +576,25 @@ func (s *Server) applyRunEvent(machine string, ev inEvent) {
 	}
 	run, e, ok := s.runs.Append(ev.RunID, ev.T, ev.TS, ev.Data, mutate)
 	if ok {
+		s.noteFork(run)
 		s.bus.Publish("run", map[string]any{"run": run, "event": e})
 	}
+}
+
+// noteFork records, once the forked session has reported its own id, where it
+// came from. The archive will list it like any other session; this note is
+// what lets the page show it as a branch or a side chat of its parent.
+func (s *Server) noteFork(run Run) {
+	if run.ForkOf == "" || run.SessionID == "" || s.meta.Get(run.SessionID).ForkOf != "" {
+		return
+	}
+	m := s.meta.Patch(run.SessionID, func(m *Meta) {
+		m.ForkOf, m.ForkKind, m.ForkTS = run.ForkOf, run.ForkKind, run.StartedTS
+		if m.Title == "" {
+			m.Title = run.Title
+		}
+	})
+	s.bus.Publish("meta", map[string]any{"id": run.SessionID, "meta": m})
 }
 
 func (s *Server) handleRunnerReply(w http.ResponseWriter, r *http.Request) {

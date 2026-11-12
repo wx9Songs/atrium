@@ -1,12 +1,28 @@
 // Renders a conversation: your messages as bubbles, the agent's prose as
 // markdown, and its tool work folded into compact, expandable steps.
-import { memo, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { api, Msg, Tool } from './api'
 import { Icon, Spinner } from './icons'
 import { highlight, renderMarkdown } from './md'
 import { commandOf, field, kindNames, parseInput, ToolKind, toolView } from './tools'
-import { clockTime, copyText, dayLabel, ms } from './util'
+import { clockTime, copyText, dayLabel, imeKey, ms } from './util'
 import { t as tr } from './i18n'
+
+/** What the reader can do with a message. Absent for read-only transcripts. */
+export type TranscriptActions = {
+  /** A run is in flight: the last turn is not finished yet. */
+  busy: boolean
+  /** Forking is possible at all (the machine is online and its runner can fork). */
+  canFork: boolean
+  /** Forks may end before a message in the middle (edit, retry, branch from a reply). */
+  canCut: boolean
+  /** Why forking is unavailable, shown when a disabled action is tapped. */
+  why?: string
+  onEdit: (m: Msg, text: string) => Promise<void>
+  onRetry: (m: Msg) => Promise<void>
+  /** Branch off after a reply: `next` is the user message the copy stops before (none = the end). */
+  onBranch: (next?: Msg) => Promise<void>
+}
 
 type Step =
   | { type: 'tool'; tool: Tool; msg: Msg; index: number; key: string }
@@ -20,6 +36,8 @@ type Block =
   | { type: 'steps'; steps: Step[]; key: string; live: boolean }
   | { type: 'compact'; key: string }
   | { type: 'error'; text: string; key: string }
+  | { type: 'inherit'; key: string }
+  | { type: 'foot'; key: string; user?: Msg; next?: Msg; last: Msg; text: string; isLast: boolean }
 
 const keyOf = (m: Msg) => m.key || `a${m.ord}`
 
@@ -33,7 +51,13 @@ function buildBlocks(msgs: Msg[]): Block[] {
     steps = []
     stepsLive = false
   }
+  let wasInherited = false
   for (const m of msgs) {
+    if (wasInherited && !m.inherited) {
+      flush()
+      out.push({ type: 'inherit', key: 'i' + keyOf(m) })
+    }
+    wasInherited = !!m.inherited
     const t = ms(m.ts)
     if (t) {
       const d = new Date(t)
@@ -81,12 +105,81 @@ function buildBlocks(msgs: Msg[]): Block[] {
     })
   }
   flush()
+  return withFooters(out)
+}
+
+/** After each finished turn, a row of actions: copy the reply, try again, branch off. */
+function withFooters(blocks: Block[]): Block[] {
+  const out: Block[] = []
+  let user: Msg | undefined
+  let texts: Msg[] = []
+  const close = (next?: Msg) => {
+    if (texts.length) {
+      const last = texts[texts.length - 1]
+      out.push({ type: 'foot', key: 'f' + keyOf(last), user, next, last, text: texts.map((m) => m.text.trim()).join('\n\n'), isLast: !next })
+    }
+    texts = []
+  }
+  blocks.forEach((b, i) => {
+    if (b.type === 'user') {
+      close(b.msg)
+      user = b.msg
+    } else if (b.type === 'inherit') {
+      // The footer of the last inherited turn belongs above the fork mark.
+      const nextUser = blocks.slice(i + 1).find((x) => x.type === 'user') as Extract<Block, { type: 'user' }> | undefined
+      close(nextUser?.msg)
+    } else if (b.type === 'text') {
+      texts.push(b.msg)
+    }
+    out.push(b)
+  })
+  close()
   return out
+}
+
+// ---------- small action buttons ----------
+
+function CopyButton({ text, label }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false)
+  return (
+    <button
+      className="act"
+      title={label || tr('复制', 'Copy')}
+      onClick={() => {
+        copyText(text)
+        setDone(true)
+        setTimeout(() => setDone(false), 1300)
+      }}
+    >
+      <Icon name={done ? 'check' : 'copy'} size={14} />
+    </button>
+  )
+}
+
+function ActButton({ icon, title, onClick, disabled }: { icon: string; title: string; onClick: () => Promise<void> | void; disabled?: boolean }) {
+  const [busy, setBusy] = useState(false)
+  return (
+    <button
+      className={'act' + (disabled ? ' off' : '')}
+      title={title}
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true)
+        try {
+          await onClick()
+        } finally {
+          setBusy(false)
+        }
+      }}
+    >
+      {busy ? <Spinner size={12} /> : <Icon name={icon} size={14} />}
+    </button>
+  )
 }
 
 // ---------- user message ----------
 
-function cleanUserText(s: string) {
+export function cleanUserText(s: string) {
   return s
     .replace(/<system-reminder>[\s\S]*?<\/system-reminder>\s*/g, '')
     .replace(/<command-name>([\s\S]*?)<\/command-name>/g, '$1')
@@ -95,14 +188,29 @@ function cleanUserText(s: string) {
     .trim()
 }
 
-const UserBubble = memo(function UserBubble({ msg }: { msg: Msg }) {
+const UserBubble = memo(function UserBubble({ msg, actions }: { msg: Msg; actions?: TranscriptActions }) {
   const text = useMemo(() => cleanUserText(msg.text), [msg.text])
   const long = text.length > 1400 || text.split('\n').length > 16
   const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState(false)
   if (!text) return null
+  if (editing && actions) {
+    return (
+      <div className="row-user editing">
+        <EditBox
+          initial={text}
+          onCancel={() => setEditing(false)}
+          onSend={async (v) => {
+            await actions.onEdit(msg, v)
+            setEditing(false)
+          }}
+        />
+      </div>
+    )
+  }
   return (
     <div className="row-user">
-      <div className={'bubble' + (long && !open ? ' clamp' : '')} title={msg.ts ? clockTime(ms(msg.ts)) : undefined}>
+      <div className={'bubble' + (long && !open ? ' clamp' : '')}>
         {text}
         {long && (
           <button className="linkbtn more" onClick={() => setOpen(!open)}>
@@ -110,9 +218,74 @@ const UserBubble = memo(function UserBubble({ msg }: { msg: Msg }) {
           </button>
         )}
       </div>
+      <div className="acts">
+        {msg.ts && <span className="act-time">{clockTime(ms(msg.ts))}</span>}
+        <CopyButton text={text} />
+        {actions?.canCut && !(msg.inherited && msg.ord < 0) && (
+          <button className="act" title={tr('编辑这条消息，从这里开出一个新分支', 'Edit this message and branch off from here')} onClick={() => setEditing(true)}>
+            <Icon name="edit" size={14} />
+          </button>
+        )}
+      </div>
     </div>
   )
 })
+
+function EditBox({ initial, onCancel, onSend }: { initial: string; onCancel: () => void; onSend: (text: string) => Promise<void> }) {
+  const [text, setText] = useState(initial)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const ta = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    const el = ta.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, window.innerHeight * 0.5) + 'px'
+  }, [text])
+  useEffect(() => {
+    const el = ta.current
+    if (el) {
+      el.focus()
+      el.setSelectionRange(el.value.length, el.value.length)
+    }
+  }, [])
+  const send = async () => {
+    const v = text.trim()
+    if (!v || busy) return
+    setBusy(true)
+    setErr('')
+    try {
+      await onSend(v)
+    } catch (e: any) {
+      setErr(e.message || tr('发送失败', 'Could not send'))
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="editbox">
+      <textarea
+        ref={ta}
+        rows={1}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onCancel()
+          else if (e.key === 'Enter' && !e.shiftKey && !imeKey(e)) {
+            e.preventDefault()
+            send()
+          }
+        }}
+      />
+      <div className="editbox-bar">
+        <span className={'editbox-note' + (err ? ' err' : '')}>
+          {err || <><Icon name="branch" size={13} />{tr('会从这里开出一个新分支，原来的对话原样保留', 'This starts a new branch from here. The original stays as it is')}</>}
+        </span>
+        <button className="btn sm" onClick={onCancel} disabled={busy}>{tr('取消', 'Cancel')}</button>
+        <button className="btn sm primary" onClick={send} disabled={busy || !text.trim()}>{busy ? <Spinner size={12} /> : tr('发送', 'Send')}</button>
+      </div>
+    </div>
+  )
+}
 
 // ---------- assistant prose ----------
 
@@ -373,7 +546,7 @@ const StepGroup = memo(function StepGroup({ steps, live, sessionId }: { steps: S
 
 // ---------- transcript ----------
 
-export function Transcript({ msgs, sessionId, focusOrd }: { msgs: Msg[]; sessionId?: string; focusOrd?: number }) {
+export function Transcript({ msgs, sessionId, focusOrd, actions, inheritLabel }: { msgs: Msg[]; sessionId?: string; focusOrd?: number; actions?: TranscriptActions; inheritLabel?: string }) {
   const blocks = useMemo(() => buildBlocks(msgs), [msgs])
   const onClick = (e: React.MouseEvent) => {
     const btn = (e.target as HTMLElement).closest('[data-copy]') as HTMLElement | null
@@ -394,8 +567,8 @@ export function Transcript({ msgs, sessionId, focusOrd }: { msgs: Msg[]; session
             return <div key={b.key} className="daysep"><span>{b.label}</span></div>
           case 'user':
             return (
-              <div key={b.key} data-ord={b.msg.ord} className={focusOrd !== undefined && b.msg.ord === focusOrd ? 'focus' : undefined}>
-                <UserBubble msg={b.msg} />
+              <div key={b.key} data-ord={b.msg.ord} className={(b.msg.inherited ? 'inherited ' : '') + (focusOrd !== undefined && b.msg.ord === focusOrd ? 'focus' : '')}>
+                <UserBubble msg={b.msg} actions={actions} />
               </div>
             )
           case 'text':
@@ -408,6 +581,38 @@ export function Transcript({ msgs, sessionId, focusOrd }: { msgs: Msg[]; session
             return <StepGroup key={b.key} steps={b.steps} live={b.live} sessionId={sessionId} />
           case 'compact':
             return <div key={b.key} className="daysep compact"><span>{tr('更早的内容已被压缩成摘要', 'Earlier messages were compacted into a summary')}</span></div>
+          case 'inherit':
+            return (
+              <div key={b.key} className="forkmark">
+                <span><Icon name="branch" size={13} />{inheritLabel || tr('以上是分叉前的内容', 'Everything above is from before the fork')}</span>
+              </div>
+            )
+          case 'foot': {
+            if (b.isLast && actions?.busy) return null
+            const why = actions?.why || ''
+            // Borrowed from the parent while the archive catches up: readable, but not yet this session's to fork.
+            const borrowed = b.last.inherited && b.last.ord < 0
+            if (borrowed) {
+              return (
+                <div key={b.key} className="acts turn">
+                  <CopyButton text={b.text} label={tr('复制回复', 'Copy reply')} />
+                  <span className="act-time">{[shortModel(b.last.model), b.last.ts ? clockTime(ms(b.last.ts)) : ''].filter(Boolean).join(' · ')}</span>
+                </div>
+              )
+            }
+            return (
+              <div key={b.key} className={'acts turn' + (b.isLast ? ' last' : '')}>
+                <CopyButton text={b.text} label={tr('复制回复', 'Copy reply')} />
+                {actions && b.isLast && b.user && !(b.user.inherited && b.user.ord < 0) && (actions.canCut || why) && (
+                  <ActButton icon="retry" disabled={!actions.canCut} title={actions.canCut ? tr('重新生成：在新分支里把这条消息再发一次', 'Try again: send the same message again in a new branch') : why} onClick={() => actions.onRetry(b.user!)} />
+                )}
+                {actions && (actions.canFork || why) && (b.isLast || actions.canCut) && (
+                  <ActButton icon="branch" disabled={!actions.canFork} title={actions.canFork ? tr('从这里分叉出一个新会话', 'Branch off into a new session from here') : why} onClick={() => actions.onBranch(b.next)} />
+                )}
+                <span className="act-time">{[shortModel(b.last.model), b.last.ts ? clockTime(ms(b.last.ts)) : ''].filter(Boolean).join(' · ')}</span>
+              </div>
+            )
+          }
           case 'error':
             return (
               <div key={b.key} className="note error">
@@ -419,4 +624,10 @@ export function Transcript({ msgs, sessionId, focusOrd }: { msgs: Msg[]; session
       })}
     </div>
   )
+}
+
+/** "claude-opus-5-5-20260101" → "opus-5-5": enough to tell models apart at a glance. */
+function shortModel(m?: string) {
+  if (!m || m.startsWith('<')) return ''
+  return m.replace(/^claude-/, '').replace(/-\d{8}$/, '')
 }

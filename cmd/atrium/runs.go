@@ -33,7 +33,17 @@ type Run struct {
 	Prompt    string `json:"prompt"`
 	Mode      string `json:"mode"`
 	Model     string `json:"model,omitempty"`
+	Effort    string `json:"effort,omitempty"` // reasoning effort, in the agent\'s own words; empty = its default
 	IsNew     bool   `json:"is_new"`
+	// A fork continues a copy of another session (ForkOf, an archive id) and so
+	// becomes a session of its own. ForkKind says why: "branch" (fork from the
+	// end or from a reply), "edit" (a rewritten message), "retry" (the same
+	// message again) or "side" (a side chat). ForkOrd is the parent message the
+	// copy stops before, when it does not run to the end.
+	ForkOf   string `json:"fork_of,omitempty"`
+	ForkKind string `json:"fork_kind,omitempty"`
+	ForkOrd  *int   `json:"fork_ord,omitempty"`
+	Title    string `json:"title,omitempty"`
 	// queued → starting → running ⇄ permission → done | error | stopped | lost
 	Status  string `json:"status"`
 	Error   string `json:"error,omitempty"`
@@ -236,6 +246,11 @@ type Meta struct {
 	Pinned bool   `json:"pinned,omitempty"`
 	Title  string `json:"title,omitempty"`
 	Hidden bool   `json:"hidden,omitempty"`
+	// Set for sessions forked here: where they came from, why, and when (on the
+	// machine's clock), so the page can tell inherited history from new turns.
+	ForkOf   string `json:"fork_of,omitempty"`
+	ForkKind string `json:"fork_kind,omitempty"`
+	ForkTS   int64  `json:"fork_ts,omitempty"`
 }
 
 type MetaStore struct {
@@ -260,6 +275,12 @@ func (ms *MetaStore) All() map[string]Meta {
 		out[k] = v
 	}
 	return out
+}
+
+func (ms *MetaStore) Get(id string) Meta {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	return ms.m[id]
 }
 
 func (ms *MetaStore) Patch(id string, fn func(*Meta)) Meta {

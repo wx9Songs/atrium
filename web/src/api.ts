@@ -18,9 +18,21 @@ export type Session = {
   parent?: string
   /** Started here and not in the archive yet. */
   synthetic?: boolean
+  /** For a synthetic session that is a fork: its parent and why (see Meta). */
+  forkOf?: string
+  forkKind?: ForkKind
+  forkOrd?: number
 }
 
-export type Meta = { pinned?: boolean; title?: string; hidden?: boolean }
+/** branch: fork from the end or from a reply · edit: a rewritten message · retry: the same message again · side: a side chat */
+export type ForkKind = 'branch' | 'edit' | 'retry' | 'side'
+
+export type Meta = { pinned?: boolean; title?: string; hidden?: boolean; fork_of?: string; fork_kind?: ForkKind; fork_ts?: number }
+
+export type SlashCmd = { name: string; description?: string; hint?: string }
+/** A model as the agent's own CLI lists it; `efforts` are the reasoning levels it accepts. */
+export type ModelOpt = { value: string; name?: string; description?: string; efforts?: string[]; default_effort?: string }
+export type Caps = { commands?: SlashCmd[]; models?: ModelOpt[]; default_model?: string; default_effort?: string }
 
 export type Machine = {
   name: string
@@ -29,6 +41,17 @@ export type Machine = {
   online: boolean
   last_seen?: number
   info?: any
+  /** Per agent: what its CLI on this machine offers. */
+  caps?: Record<string, Caps>
+}
+
+export type ForkReq = {
+  session_id: string
+  kind: ForkKind
+  before_ts?: string
+  before_text?: string
+  before_ord?: number
+  title?: string
 }
 
 export type PermReq = {
@@ -50,7 +73,12 @@ export type Run = {
   prompt: string
   mode: string
   model?: string
+  effort?: string
   is_new: boolean
+  fork_of?: string
+  fork_kind?: ForkKind
+  fork_ord?: number
+  title?: string
   status: string
   error?: string
   error_zh?: string
@@ -93,6 +121,8 @@ export type Msg = {
   key?: string
   live?: boolean
   error?: boolean
+  /** In a forked session: copied from the parent rather than said here. */
+  inherited?: boolean
 }
 
 export type SearchHit = {
@@ -104,6 +134,14 @@ export type SearchHit = {
   snippet: string
   ended?: string
 }
+
+export type Term = { id: string; machine: string; key: string; cwd: string; created: number; exited?: boolean; code?: number; error?: string; error_zh?: string }
+/** Terminal output as it arrives: `off` is where this piece starts in the terminal's whole output. */
+export type TermEvent = { id: string; off?: number; data?: string; exit?: boolean; code?: number; error?: string; error_zh?: string }
+
+export type FsEntry = { name: string; dir?: boolean; size?: number; mtime?: number }
+export type FsList = { path: string; parent: string; home: string; entries: FsEntry[]; more?: boolean }
+export type FsFile = { path: string; size: number; mtime: number; content?: string; binary?: boolean; too_big?: boolean }
 
 export class ApiError extends Error {
   status: number
@@ -174,6 +212,8 @@ export const api = {
     prompt: string
     mode?: string
     model?: string
+    effort?: string
+    fork?: ForkReq
   }) => req<{ run: Run }>('/api/runs', { method: 'POST', body }),
   permission: (
     runId: string,
@@ -185,4 +225,18 @@ export const api = {
       method: 'POST',
       body: { machine, path },
     }),
+  /** Have a machine's runner ask its agents again for their models and commands. */
+  capsRefresh: (machine: string) => req<{ machines: Machine[] }>(`/api/machines/${enc(machine)}/caps`, { method: 'POST', body: {} }),
+  terms: () => req<{ terms: Term[] }>('/api/terms'),
+  termOpen: (body: { machine: string; key: string; cwd: string; cols: number; rows: number }) => req<{ term: Term }>('/api/terms', { method: 'POST', body }),
+  /** The terminal and the output the hub still holds (base64), ending at byte offset `end`. */
+  termGet: (id: string) => req<{ term: Term; data: string; end: number }>(`/api/terms/${enc(id)}`),
+  termInput: (id: string, data: string) => req(`/api/terms/${enc(id)}/input`, { method: 'POST', body: { data } }),
+  termResize: (id: string, cols: number, rows: number) => req(`/api/terms/${enc(id)}/resize`, { method: 'POST', body: { cols, rows } }),
+  termClose: (id: string) => req(`/api/terms/${enc(id)}/close`, { method: 'POST', body: {} }),
+  fsList: (machine: string, path: string) => req<FsList>('/api/fs/list', { method: 'POST', body: { machine, path } }),
+  fsRead: (machine: string, path: string) => req<FsFile>('/api/fs/read', { method: 'POST', body: { machine, path } }),
+  /** `mtime` is the version being edited; the save is refused if the file changed since. 0 overwrites. */
+  fsWrite: (machine: string, path: string, content: string, mtime: number) =>
+    req<{ path: string; size: number; mtime: number }>('/api/fs/write', { method: 'POST', body: { machine, path, content, mtime } }),
 }
