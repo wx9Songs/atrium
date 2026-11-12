@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# atrium-machine: add or list machines on the Atrium server (run as root).
+#
+#   atrium-machine add NAME 'ssh-ed25519 AAAA… comment' [LABEL]
+#       Gives the machine a write-only folder for its transcripts, lets its key open
+#       the tunnel to the hub, tells the archive about it, and prints a runner token
+#       (shown once; pass it to machine-install.sh on that machine).
+#   atrium-machine list
+#   atrium-machine remove NAME        (stops access; already-archived transcripts are kept)
+set -euo pipefail
+
+ROOT=/srv/agent-sessions
+KEYS=/var/lib/agentsync/.ssh/authorized_keys
+CFG=/srv/atrium/config.json
+ARC=/srv/agentsview-data/config.toml
+HUB_PORT="$(python3 -c "import json;print(json.load(open('$CFG'))['listen'].rsplit(':',1)[1])" 2>/dev/null || echo 3005)"
+RRSYNC="$(command -v rrsync)"
+
+[ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
+
+# The archive config lists one source per folder. Rebuild that part from what is on disk,
+# keeping the archive's own top-level settings (token, secrets) untouched.
+rebuild_archive_config() {
+  python3 - "$ROOT" "$ARC" <<'PY'
+import os, re, sys
+root, path = sys.argv[1], sys.argv[2]
+text = open(path).read()
+head = []
+for line in text.splitlines():
+    if line.startswith("[") or line.startswith("  ["):
+        break
+    if line.strip():
+        head.append(line)
+machines = sorted(d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d)))
+homes, sources = [], []
+for m in machines:
+    base = os.path.join(root, m)
+    if os.path.isdir(os.path.join(base, "claude", "projects")):
+        sources.append(("claude", os.path.join(base, "claude", "projects"), m))
+    if os.path.isdir(os.path.join(base, "codex")):
+        homes.append(os.path.join(base, "codex"))
+        for sub in ("sessions", "archived_sessions"):
+            sources.append(("codex", os.path.join(base, "codex", sub), m))
+out = head + ["", "[agents]", "  [agents.claude]", "    dirs = []", "  [agents.codex]", "    dirs = []",
+              "    homes = [%s]" % ", ".join('"%s"' % h for h in homes)]
+for agent, d, m in sources:
+    out += ["", "[[session_sources]]", '  agent = "%s"' % agent, '  dir = "%s"' % d, '  machine = "%s"' % m]
+open(path, "w").write("\n".join(out) + "\n")
+PY
+  chown agentsview:agentsview "$ARC"; chmod 600 "$ARC"
+  systemctl restart agentsview
+}
+
+valid_name() { echo "$1" | grep -Eq '^[a-z0-9][a-z0-9-]{0,30}$'; }
+
+case "${1:-}" in
+  add)
+    NAME="${2:-}"; PUB="${3:-}"; LABEL="${4:-}"
+    valid_name "$NAME" || { echo "NAME: lowercase letters, digits and dashes" >&2; exit 2; }
+    echo "$PUB" | grep -Eq '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-[a-z0-9-]+) [A-Za-z0-9+/=]+' || { echo "second argument must be the machine's public key" >&2; exit 2; }
+    for d in claude/projects codex/sessions codex/archived_sessions; do
+      install -d -o agentsync -g agentsync -m 750 "$ROOT/$NAME/$d"
+    done
+    chown agentsync:agentsync "$ROOT/$NAME" "$ROOT/$NAME/claude" "$ROOT/$NAME/codex"; chmod 750 "$ROOT/$NAME" "$ROOT/$NAME/claude" "$ROOT/$NAME/codex"
+    grep -v "rrsync -wo $ROOT/$NAME\"" "$KEYS" > "$KEYS.new" || true
+    echo "command=\"$RRSYNC -wo $ROOT/$NAME\",restrict,port-forwarding,permitopen=\"127.0.0.1:$HUB_PORT\" $PUB" >> "$KEYS.new"
+    mv "$KEYS.new" "$KEYS"; chown agentsync:agentsync "$KEYS"; chmod 600 "$KEYS"
+    rebuild_archive_config
+    TOKEN="$(runuser -u atrium -- /usr/local/bin/atrium add-machine --config "$CFG" "$NAME")"
+    if [ -n "$LABEL" ]; then
+      python3 - "$CFG" "$NAME" "$LABEL" <<'PY'
+import json, sys
+p, n, l = sys.argv[1:4]; c = json.load(open(p)); c.setdefault("labels", {})[n] = l
+open(p, "w").write(json.dumps(c, ensure_ascii=False, indent=2))
+PY
+      chown atrium:atrium "$CFG"; chmod 600 "$CFG"
+    fi
+    echo "machine '$NAME' added."
+    echo "runner token (shown once): $TOKEN"
+    ;;
+  list)
+    python3 -c "import json;c=json.load(open('$CFG'));[print(n, '-', c.get('labels',{}).get(n,'')) for n in sorted(c.get('machines',{}))]"
+    ;;
+  remove)
+    NAME="${2:-}"; valid_name "$NAME" || { echo "usage: atrium-machine remove NAME" >&2; exit 2; }
+    grep -v "rrsync -wo $ROOT/$NAME\"" "$KEYS" > "$KEYS.new" || true
+    mv "$KEYS.new" "$KEYS"; chown agentsync:agentsync "$KEYS"; chmod 600 "$KEYS"
+    python3 - "$CFG" "$NAME" <<'PY'
+import json, sys
+p, n = sys.argv[1:3]; c = json.load(open(p)); c.get("machines", {}).pop(n, None)
+open(p, "w").write(json.dumps(c, ensure_ascii=False, indent=2))
+PY
+    chown atrium:atrium "$CFG"; chmod 600 "$CFG"; systemctl restart atrium
+    echo "machine '$NAME' can no longer push or connect. Its archived transcripts stay in $ROOT/$NAME."
+    ;;
+  *) sed -n '2,10p' "$0"; exit 2 ;;
+esac

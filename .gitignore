@@ -1,0 +1,10 @@
+/bin/
+/local/
+/web/node_modules/
+/web/dist/
+/cmd/atrium/webdist/*
+!/cmd/atrium/webdist/.keep
+/app/.build/
+/app/dist/
+/dev/
+.DS_Store

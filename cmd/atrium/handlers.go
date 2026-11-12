@@ -1,0 +1,489 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+)
+
+func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{"version": version, "machines": s.machineList(r.Context())})
+}
+
+// recentRuns are the runs the page may still need: anything live, anything
+// that finished recently (its messages may not be in the archive yet), and
+// sessions started here that the archive has not picked up.
+func (s *Server) recentRuns() []Run {
+	now := time.Now().UnixMilli()
+	return s.runs.List(func(r *Run) bool {
+		if !terminal(r.Status) {
+			return true
+		}
+		if now-r.Ended < 24*3600*1000 {
+			return true
+		}
+		return r.IsNew && now-r.Created < 7*24*3600*1000
+	})
+}
+
+func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
+	list, etag, err := s.arc.Sessions(r.Context(), r.URL.Query().Get("fresh") == "1")
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "存档服务暂时连不上："+err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"sessions": list, "etag": etag, "meta": s.meta.All(),
+		"runs": s.recentRuns(), "machines": s.machineList(r.Context()),
+	})
+}
+
+func intParam(r *http.Request, name string, def int) int {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	limit := intParam(r, "limit", 80)
+	if limit < 1 || limit > 400 {
+		limit = 80
+	}
+	var page MsgPage
+	var err error
+	if r.URL.Query().Has("after") {
+		page, err = s.arc.After(r.Context(), id, intParam(r, "after", -1), limit)
+	} else {
+		page, err = s.arc.Latest(r.Context(), id, intParam(r, "before", -1), limit)
+	}
+	if err != nil {
+		var ae *archiveError
+		if errors.As(err, &ae) && ae.Status == 404 {
+			writeJSON(w, 200, map[string]any{"messages": []Msg{}, "more": false, "missing": true})
+			return
+		}
+		writeErr(w, http.StatusBadGateway, "读取会话内容失败："+err.Error())
+		return
+	}
+	if page.Messages == nil {
+		page.Messages = []Msg{}
+	}
+	writeJSON(w, 200, page)
+}
+
+func (s *Server) handleTool(w http.ResponseWriter, r *http.Request) {
+	t, err := s.arc.ToolFull(r.Context(), r.PathValue("id"), intParam(r, "ord", -1), intParam(r, "i", -1))
+	if err != nil {
+		writeErr(w, 404, err.Error())
+		return
+	}
+	writeJSON(w, 200, t)
+}
+
+func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Pinned *bool   `json:"pinned"`
+		Title  *string `json:"title"`
+		Hidden *bool   `json:"hidden"`
+	}
+	if err := readJSON(r, &body, 1<<16); err != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	id := r.PathValue("id")
+	m := s.meta.Patch(id, func(m *Meta) {
+		if body.Pinned != nil {
+			m.Pinned = *body.Pinned
+		}
+		if body.Title != nil {
+			m.Title = strings.TrimSpace(*body.Title)
+		}
+		if body.Hidden != nil {
+			m.Hidden = *body.Hidden
+		}
+	})
+	s.bus.Publish("meta", map[string]any{"id": id, "meta": m})
+	writeJSON(w, 200, m)
+}
+
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, 200, map[string]any{"hits": []SearchHit{}})
+		return
+	}
+	hits, err := s.arc.Search(r.Context(), q, 40)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "搜索失败："+err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"hits": hits})
+}
+
+// ---------- runs ----------
+
+func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
+	sid := r.URL.Query().Get("session")
+	if sid == "" {
+		writeJSON(w, 200, map[string]any{"runs": s.recentRuns()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"runs": s.runs.List(func(x *Run) bool { return x.SessionID == sid })})
+}
+
+func (s *Server) handleRunEvents(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	run, ok := s.runs.Get(id)
+	if !ok {
+		writeErr(w, 404, "run not found")
+		return
+	}
+	ev, _ := s.runs.Events(id, intParam(r, "after", 0))
+	writeJSON(w, 200, map[string]any{"run": run, "events": ev})
+}
+
+var validModes = map[string]bool{"": true, "machine": true, "ask": true, "plan": true, "edits": true, "full": true, "readonly": true}
+
+func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SessionID string `json:"session_id"`
+		Machine   string `json:"machine"`
+		Agent     string `json:"agent"`
+		Cwd       string `json:"cwd"`
+		Prompt    string `json:"prompt"`
+		Mode      string `json:"mode"`
+		Model     string `json:"model"`
+	}
+	if err := readJSON(r, &body, 4<<20); err != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	if strings.TrimSpace(body.Prompt) == "" {
+		writeErr(w, 400, "消息不能为空")
+		return
+	}
+	if !validModes[body.Mode] {
+		writeErr(w, 400, "未知的权限模式")
+		return
+	}
+	run := Run{
+		ID: "r" + randToken(9), Prompt: body.Prompt, Mode: body.Mode, Model: body.Model,
+		Status: "queued", Created: time.Now().UnixMilli(),
+	}
+	if body.SessionID != "" {
+		if sess, ok := s.arc.Find(r.Context(), body.SessionID); ok {
+			run.SessionID, run.NativeID, run.Agent, run.Machine, run.Cwd = sess.ID, sess.NativeID, sess.Agent, sess.Machine, sess.Cwd
+		} else {
+			// A session started here that the archive has not indexed yet.
+			prev := s.runs.List(func(x *Run) bool { return x.SessionID == body.SessionID && x.NativeID != "" })
+			if len(prev) == 0 {
+				writeErr(w, 404, "找不到这个会话")
+				return
+			}
+			p := prev[len(prev)-1]
+			run.SessionID, run.NativeID, run.Agent, run.Machine, run.Cwd = p.SessionID, p.NativeID, p.Agent, p.Machine, p.Cwd
+		}
+		busy := s.runs.List(func(x *Run) bool { return x.SessionID == run.SessionID && !terminal(x.Status) })
+		if len(busy) > 0 {
+			writeErr(w, http.StatusConflict, "这个会话正在运行中，请等它结束或先停止")
+			return
+		}
+	} else {
+		if body.Agent != "claude" && body.Agent != "codex" {
+			writeErr(w, 400, "请选择 Claude 或 Codex")
+			return
+		}
+		if strings.TrimSpace(body.Cwd) == "" {
+			writeErr(w, 400, "请选择工作目录")
+			return
+		}
+		run.IsNew, run.Agent, run.Machine, run.Cwd = true, body.Agent, body.Machine, strings.TrimSpace(body.Cwd)
+	}
+	if run.Agent != "claude" && run.Agent != "codex" {
+		writeErr(w, 400, "暂不支持操控这种会话："+run.Agent)
+		return
+	}
+	if !s.mach.has(run.Machine) {
+		writeErr(w, http.StatusConflict, "这台机器没有接入操控，只能查看历史")
+		return
+	}
+	if !s.mach.online(run.Machine) {
+		writeErr(w, http.StatusConflict, "这台机器现在不在线")
+		return
+	}
+	run = s.runs.Create(run)
+	cmd := map[string]any{"id": "c" + randToken(9), "type": "start", "run": map[string]any{
+		"id": run.ID, "agent": run.Agent, "native_id": run.NativeID, "cwd": run.Cwd,
+		"prompt": run.Prompt, "mode": run.Mode, "model": run.Model, "is_new": run.IsNew,
+	}}
+	if err := s.mach.enqueue(run.Machine, cmd); err != nil {
+		run, _, _ = s.runs.Append(run.ID, "exit", time.Now().UnixMilli(), nil, func(x *Run) {
+			x.Status, x.Error, x.Ended = "error", err.Error(), time.Now().UnixMilli()
+		})
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	s.bus.Publish("run", map[string]any{"run": run})
+	writeJSON(w, 200, map[string]any{"run": run})
+}
+
+func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.runs.Get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, 404, "run not found")
+		return
+	}
+	var body struct {
+		RequestID string          `json:"request_id"`
+		Behavior  string          `json:"behavior"` // allow | deny
+		Message   string          `json:"message"`
+		Always    bool            `json:"always"`
+		Input     json.RawMessage `json:"input"` // optional replacement input (answers to a question)
+	}
+	if err := readJSON(r, &body, 1<<20); err != nil || (body.Behavior != "allow" && body.Behavior != "deny") {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	if run.Perm == nil || run.Perm.RequestID != body.RequestID {
+		writeErr(w, http.StatusConflict, "这个请求已经处理过了")
+		return
+	}
+	err := s.mach.enqueue(run.Machine, map[string]any{
+		"id": "c" + randToken(9), "type": "permission", "run_id": run.ID, "request_id": body.RequestID,
+		"behavior": body.Behavior, "message": body.Message, "always": body.Always, "input": body.Input,
+	})
+	if err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.runs.Get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, 404, "run not found")
+		return
+	}
+	if terminal(run.Status) {
+		writeJSON(w, 200, map[string]any{"run": run})
+		return
+	}
+	if run.Status == "queued" {
+		s.mach.removeQueued(run.Machine, func(c map[string]any) bool {
+			rr, _ := c["run"].(map[string]any)
+			return c["type"] == "start" && rr != nil && rr["id"] == run.ID
+		})
+	}
+	s.mach.enqueue(run.Machine, map[string]any{"id": "c" + randToken(9), "type": "stop", "run_id": run.ID})
+	if run.Status == "queued" || !s.mach.online(run.Machine) {
+		// Nothing on the machine will answer: close the run here.
+		s.finishRun(run.ID, "stopped", "")
+	}
+	run, _ = s.runs.Get(run.ID)
+	writeJSON(w, 200, map[string]any{"run": run})
+}
+
+func (s *Server) finishRun(id, status, msg string) {
+	now := time.Now().UnixMilli()
+	data, _ := json.Marshal(map[string]any{"error": msg, "by": "hub"})
+	run, ev, ok := s.runs.Append(id, "exit", now, data, func(x *Run) {
+		if terminal(x.Status) {
+			return
+		}
+		x.Status, x.Error, x.Ended, x.Perm = status, msg, now, nil
+	})
+	if ok {
+		s.bus.Publish("run", map[string]any{"run": run, "event": ev})
+	}
+}
+
+func (s *Server) handleLs(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Machine string `json:"machine"`
+		Path    string `json:"path"`
+	}
+	if err := readJSON(r, &body, 1<<16); err != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	data, err := s.mach.rpc(r.Context(), body.Machine, map[string]any{"type": "ls", "path": body.Path}, 12*time.Second)
+	if err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Write(data)
+}
+
+// ---------- runner side ----------
+
+func (s *Server) handleRunnerHello(w http.ResponseWriter, r *http.Request) {
+	name := machineOf(r)
+	var raw json.RawMessage
+	if err := readJSON(r, &raw, 1<<20); err != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	var hello struct {
+		Active []string `json:"active"`
+	}
+	json.Unmarshal(raw, &hello)
+	s.mach.setInfo(name, raw)
+	active := map[string]bool{}
+	for _, id := range hello.Active {
+		active[id] = true
+	}
+	// Runs the hub believes are in flight on this machine but the runner no
+	// longer has (it restarted) cannot finish: close them.
+	for _, run := range s.runs.List(func(x *Run) bool {
+		return x.Machine == name && (x.Status == "starting" || x.Status == "running" || x.Status == "permission")
+	}) {
+		if !active[run.ID] {
+			s.finishRun(run.ID, "lost", "这台机器上的后台程序重启了，这次运行被中断")
+		}
+	}
+	s.bus.Publish("machines", s.machineList(r.Context()))
+	writeJSON(w, 200, map[string]any{"ok": true, "machine": name, "version": version})
+}
+
+func (s *Server) handleRunnerPoll(w http.ResponseWriter, r *http.Request) {
+	wait := intParam(r, "wait", 25)
+	if wait < 1 || wait > 50 {
+		wait = 25
+	}
+	name := machineOf(r)
+	cmds := s.mach.poll(r.Context(), name, time.Duration(wait)*time.Second)
+	s.mach.touch(name)
+	if cmds == nil {
+		cmds = []json.RawMessage{}
+	}
+	writeJSON(w, 200, map[string]any{"commands": cmds})
+}
+
+type inEvent struct {
+	RunID string          `json:"run_id"`
+	T     string          `json:"t"`
+	TS    int64           `json:"ts"`
+	Data  json.RawMessage `json:"data"`
+}
+
+func (s *Server) handleRunnerEvents(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Events []inEvent `json:"events"`
+	}
+	if err := readJSON(r, &body, 32<<20); err != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	name := machineOf(r)
+	for _, ev := range body.Events {
+		s.applyRunEvent(name, ev)
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func setRunSession(x *Run, native string) {
+	if native == "" || (!x.IsNew && x.NativeID != "") {
+		return
+	}
+	x.NativeID = native
+	if x.Agent == "codex" {
+		x.SessionID = "codex:" + native
+	} else {
+		x.SessionID = native
+	}
+}
+
+func (s *Server) applyRunEvent(machine string, ev inEvent) {
+	run, ok := s.runs.Get(ev.RunID)
+	if !ok || run.Machine != machine || terminal(run.Status) {
+		return
+	}
+	now := time.Now().UnixMilli()
+	mutate := func(x *Run) {
+		switch ev.T {
+		case "status":
+			var d struct {
+				State     string `json:"state"`
+				SessionID string `json:"session_id"`
+				StartedTS int64  `json:"started_ts"`
+			}
+			json.Unmarshal(ev.Data, &d)
+			if (d.State == "starting" || d.State == "running") && x.Status != "permission" {
+				x.Status = d.State
+			}
+			setRunSession(x, d.SessionID)
+			if d.StartedTS > 0 {
+				x.StartedTS = d.StartedTS
+			}
+		case "agent":
+			var d struct {
+				Type      string `json:"type"`
+				Subtype   string `json:"subtype"`
+				SessionID string `json:"session_id"`
+				ThreadID  string `json:"thread_id"`
+			}
+			json.Unmarshal(ev.Data, &d)
+			if d.Type == "system" && d.Subtype == "init" {
+				setRunSession(x, d.SessionID)
+			}
+			if d.Type == "thread.started" {
+				setRunSession(x, d.ThreadID)
+			}
+			x.LastTS = ev.TS
+			if x.Status == "starting" || x.Status == "queued" {
+				x.Status = "running"
+			}
+		case "permission":
+			var p PermReq
+			if json.Unmarshal(ev.Data, &p) == nil && p.RequestID != "" {
+				x.Perm, x.Status = &p, "permission"
+			}
+		case "permission_done":
+			x.Perm = nil
+			if x.Status == "permission" {
+				x.Status = "running"
+			}
+		case "exit":
+			var d struct {
+				Error   string `json:"error"`
+				Stopped bool   `json:"stopped"`
+			}
+			json.Unmarshal(ev.Data, &d)
+			x.Perm, x.Ended, x.Error = nil, now, d.Error
+			switch {
+			case d.Stopped:
+				x.Status = "stopped"
+			case d.Error != "":
+				x.Status = "error"
+			default:
+				x.Status = "done"
+			}
+		}
+	}
+	run, e, ok := s.runs.Append(ev.RunID, ev.T, ev.TS, ev.Data, mutate)
+	if ok {
+		s.bus.Publish("run", map[string]any{"run": run, "event": e})
+	}
+}
+
+func (s *Server) handleRunnerReply(w http.ResponseWriter, r *http.Request) {
+	var rep rpcReply
+	if err := readJSON(r, &rep, 8<<20); err != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	s.mach.resolve(rep)
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
