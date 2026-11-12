@@ -1,4 +1,5 @@
 // Types and HTTP helpers for the hub API.
+import { t, lang } from './i18n'
 
 export type Session = {
   id: string
@@ -52,6 +53,7 @@ export type Run = {
   is_new: boolean
   status: string
   error?: string
+  error_zh?: string
   created: number
   ended?: number
   started_ts?: number
@@ -121,16 +123,16 @@ async function req<T>(path: string, opts: { method?: string; body?: any } = {}):
   try {
     res = await fetch(path, {
       method: opts.method || 'GET',
-      headers: opts.body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      headers: opts.body !== undefined ? { 'Content-Type': 'application/json', 'X-Atrium-Lang': lang } : { 'X-Atrium-Lang': lang },
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
       credentials: 'same-origin',
     })
   } catch {
-    throw new ApiError(0, '连不上服务器，请检查网络或隧道')
+    throw new ApiError(0, t('连不上服务器，请检查网络或隧道', 'Cannot reach the server. Check the network or the tunnel'))
   }
   if (res.status === 401 && !path.startsWith('/api/login')) {
     onUnauthorized()
-    throw new ApiError(401, '登录已失效')
+    throw new ApiError(401, t('登录已失效', 'Signed out'))
   }
   let data: any = null
   try {
@@ -138,7 +140,7 @@ async function req<T>(path: string, opts: { method?: string; body?: any } = {}):
   } catch {
     /* empty body */
   }
-  if (!res.ok) throw new ApiError(res.status, (data && data.error) || `请求失败（${res.status}）`)
+  if (!res.ok) throw new ApiError(res.status, (data && data.error) || t(`请求失败（${res.status}）`, `Request failed (${res.status})`))
   return data as T
 }
 

@@ -1,4 +1,5 @@
 // Small stroke icons, drawn inline so the page needs no icon font.
+import { t } from './i18n'
 const P: Record<string, string> = {
   plus: 'M12 5v14M5 12h14',
   search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4',
@@ -59,7 +60,7 @@ export function Icon({ name, size = 16, className }: { name: string; size?: numb
 }
 
 export function Spinner({ size = 14 }: { size?: number }) {
-  return <span className="spinner" style={{ width: size, height: size }} aria-label="运行中" />
+  return <span className="spinner" style={{ width: size, height: size }} aria-label={t('运行中', 'running')} />
 }
 
 /** A small coloured tag for the agent, instead of brand logos. */

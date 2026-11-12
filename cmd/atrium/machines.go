@@ -24,10 +24,11 @@ type Machine struct {
 }
 
 type rpcReply struct {
-	ID    string          `json:"id"`
-	OK    bool            `json:"ok"`
-	Data  json.RawMessage `json:"data,omitempty"`
-	Error string          `json:"error,omitempty"`
+	ID      string          `json:"id"`
+	OK      bool            `json:"ok"`
+	Data    json.RawMessage `json:"data,omitempty"`
+	Error   string          `json:"error,omitempty"`
+	ErrorZh string          `json:"error_zh,omitempty"`
 }
 
 type Machines struct {
@@ -118,7 +119,7 @@ func (ms *Machines) enqueue(name string, cmd any) error {
 	defer ms.mu.Unlock()
 	m := ms.m[name]
 	if m == nil {
-		return errors.New("这台机器没有接入")
+		return bi("这台机器没有接入", "This machine is not connected")
 	}
 	m.queue = append(m.queue, b)
 	select {
@@ -184,7 +185,7 @@ func (ms *Machines) poll(ctx context.Context, name string, wait time.Duration) [
 
 func (ms *Machines) rpc(ctx context.Context, name string, cmd map[string]any, timeout time.Duration) (json.RawMessage, error) {
 	if !ms.online(name) {
-		return nil, errors.New("这台机器不在线")
+		return nil, bi("这台机器不在线", "This machine is offline")
 	}
 	id := "c" + randToken(9)
 	cmd["id"] = id
@@ -205,11 +206,14 @@ func (ms *Machines) rpc(ctx context.Context, name string, cmd map[string]any, ti
 	select {
 	case rep := <-ch:
 		if !rep.OK {
+			if rep.ErrorZh != "" {
+				return nil, bi(rep.ErrorZh, rep.Error)
+			}
 			return nil, errors.New(rep.Error)
 		}
 		return rep.Data, nil
 	case <-t.C:
-		return nil, errors.New("机器没有在限定时间内回应")
+		return nil, bi("机器没有在限定时间内回应", "The machine did not answer in time")
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}

@@ -37,6 +37,7 @@ type Run struct {
 	// queued → starting → running ⇄ permission → done | error | stopped | lost
 	Status  string `json:"status"`
 	Error   string `json:"error,omitempty"`
+	ErrorZh string `json:"error_zh,omitempty"`
 	Created int64  `json:"created"`         // hub clock, ms
 	Ended   int64  `json:"ended,omitempty"` // hub clock, ms
 	// Machine-clock timestamps. The transcript on the machine is stamped by the
@@ -91,7 +92,8 @@ func newRunStore(dir string) *RunStore {
 		st := &runState{run: r}
 		if !terminal(r.Status) {
 			st.run.Status = "lost"
-			st.run.Error = "服务重启时这次运行的状态丢失了"
+			st.run.Error = "The server restarted and lost track of this run"
+			st.run.ErrorZh = "服务重启时这次运行的状态丢失了"
 			st.run.Perm = nil
 			st.run.Ended = time.Now().UnixMilli()
 			rs.persist(st)

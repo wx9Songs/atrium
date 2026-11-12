@@ -6,6 +6,7 @@ import { SessionView } from './SessionView'
 import { Sidebar } from './Sidebar'
 import { signIn, useStore } from './store'
 import { copyText, ms } from './util'
+import { t } from './i18n'
 
 // Routes live in the hash: #/s/<session id>[?m=<message ordinal>]
 function parseHash(): { key?: string; ord?: number } {
@@ -88,18 +89,18 @@ function Shell({ theme, toggleTheme }: { theme: string; toggleTheme: () => void 
         <div className="main">
           <div className="empty">
             <div className="empty-logo"><span className="logo big" /></div>
-            <div className="empty-title">所有机器上的会话，都在这里</div>
+            <div className="empty-title">{t('所有机器上的会话，都在这里', 'Every session, from every machine')}</div>
             <div className="empty-sub">
-              {loaded ? `共 ${stats.total} 个会话，今天有 ${stats.today} 个在更新。` : '正在加载…'}
-              <br />从左边选一个继续，或者开始一个新的。
+              {loaded ? t(`共 ${stats.total} 个会话，今天有 ${stats.today} 个在更新。`, `${stats.total} sessions, ${stats.today} active today.`) : t('正在加载…', 'Loading…')}
+              <br />{t('从左边选一个继续，或者开始一个新的。', 'Pick one on the left to continue, or start a new one.')}
             </div>
             <div className="empty-actions">
-              <button className="btn primary" onClick={() => setShowNew(true)}><Icon name="plus" size={15} />新会话</button>
-              <button className="btn" onClick={() => setShowSearch(true)}><Icon name="search" size={15} />搜索对话内容</button>
+              <button className="btn primary" onClick={() => setShowNew(true)}><Icon name="plus" size={15} />{t('新会话', 'New session')}</button>
+              <button className="btn" onClick={() => setShowSearch(true)}><Icon name="search" size={15} />{t('搜索对话内容', 'Search conversations')}</button>
             </div>
             <div className="empty-machines">
               {machines.filter((m) => m.runner).map((m) => (
-                <span key={m.name} className="mach"><span className={'dot ' + (m.online ? 'on' : 'off')} />{m.label}<i>{m.online ? '在线' : '不在线'}</i></span>
+                <span key={m.name} className="mach"><span className={'dot ' + (m.online ? 'on' : 'off')} />{m.label}<i>{m.online ? t('在线', 'online') : t('不在线', 'offline')}</i></span>
               ))}
             </div>
           </div>
@@ -127,7 +128,7 @@ function Login() {
     try {
       await signIn(c)
     } catch (e: any) {
-      setErr(e.message || '登录失败')
+      setErr(e.message || t('登录失败', 'Sign-in failed'))
     } finally {
       setBusy(false)
     }
@@ -136,16 +137,16 @@ function Login() {
     <div className="login">
       <div className="login-card">
         <span className="logo big" />
-        <h1>Atrium 中庭</h1>
-        <p>{hint ? '这个页面需要先登录。在终端里运行下面这条命令，它会打开已登录的页面：' : '这个页面需要先登录。在运行 Atrium 的服务器上执行下面这条命令，把它输出的链接在这个浏览器里打开：'}</p>
+        <h1>{t('Atrium 中庭', 'Atrium')}</h1>
+        <p>{hint ? t('这个页面需要先登录。在终端里运行下面这条命令，它会打开已登录的页面：', 'Sign in first. Run this in a terminal; it opens the page signed in:') : t('这个页面需要先登录。在运行 Atrium 的服务器上执行下面这条命令，把它输出的链接在这个浏览器里打开：', 'Sign in first. Run this on the Atrium server and open the link it prints in this browser:')}</p>
         <div className="login-cmd">
           <code>{cmd}</code>
-          <button className="linkbtn" onClick={() => copyText(cmd)}>复制</button>
+          <button className="linkbtn" onClick={() => copyText(cmd)}>{t('复制', 'Copy')}</button>
         </div>
-        <p className="dim">或者把登录链接粘贴到这里：</p>
+        <p className="dim">{t('或者把登录链接粘贴到这里：', 'Or paste the sign-in link here:')}</p>
         <div className="dirrow">
-          <input className="input" value={code} placeholder="粘贴登录链接" onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit() }} />
-          <button className="btn primary" onClick={submit} disabled={busy || !code.trim()}>{busy ? <Spinner size={13} /> : '登录'}</button>
+          <input className="input" value={code} placeholder={t('粘贴登录链接', 'Sign-in link')} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit() }} />
+          <button className="btn primary" onClick={submit} disabled={busy || !code.trim()}>{busy ? <Spinner size={13} /> : t('登录', 'Sign in')}</button>
         </div>
         {(err || loadError) && <div className="errtext">{err || loadError}</div>}
       </div>

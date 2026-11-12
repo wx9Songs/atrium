@@ -19,6 +19,7 @@ import sql from 'highlight.js/lib/languages/sql'
 import typescript from 'highlight.js/lib/languages/typescript'
 import xml from 'highlight.js/lib/languages/xml'
 import yaml from 'highlight.js/lib/languages/yaml'
+import { t } from './i18n'
 
 const langs: Record<string, any> = {
   bash, cpp, css, diff, dockerfile, go, ini, java, javascript, json, markdown, python, rust, sql, typescript, xml, yaml,
@@ -53,8 +54,8 @@ marked.use({
       const text: string = token.text ?? ''
       const lang: string = (token.lang || '').trim()
       return (
-        `<div class="codeblock"><div class="codehead"><span>${esc(lang || '代码')}</span>` +
-        `<button type="button" class="copybtn" data-copy>复制</button></div>` +
+        `<div class="codeblock"><div class="codehead"><span>${esc(lang || t('代码', 'code'))}</span>` +
+        `<button type="button" class="copybtn" data-copy>${t('复制', 'Copy')}</button></div>` +
         `<pre><code class="hljs">${highlight(text, lang)}</code></pre></div>`
       )
     },

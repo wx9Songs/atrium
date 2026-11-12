@@ -1,13 +1,14 @@
 // Converts the raw events of a live run (Claude stream-json or Codex exec
 // JSON) into the same message shape the archive uses, so both render alike.
 import { Msg, Run, RunEvent, Tool } from './api'
+import { t } from './i18n'
 
 function textOf(content: any): string {
   if (content == null) return ''
   if (typeof content === 'string') return content
   if (Array.isArray(content))
     return content
-      .map((p) => (typeof p === 'string' ? p : p?.type === 'text' ? p.text : p?.type === 'image' ? '[图片]' : ''))
+      .map((p) => (typeof p === 'string' ? p : p?.type === 'text' ? p.text : p?.type === 'image' ? t('[图片]', '[image]') : ''))
       .join('')
   try {
     return JSON.stringify(content, null, 2)
@@ -62,7 +63,7 @@ function applyCodexItem(rec: CodexRec, it: any, done: boolean) {
     case 'error':
       m.role = 'system'
       m.error = true
-      m.text = it.message || '出错了'
+      m.text = it.message || t('出错了', 'Failed')
       break
     default:
       tool(String(it.type || 'tool'), 'Tool', it)

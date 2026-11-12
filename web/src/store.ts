@@ -2,6 +2,7 @@
 // machines, runs and their live events. Kept fresh by server-sent events.
 import { useSyncExternalStore } from 'react'
 import { api, Machine, Meta, Run, RunEvent, Session, setUnauthorizedHandler } from './api'
+import { t } from './i18n'
 
 export type State = {
   authed: boolean | null
@@ -69,7 +70,7 @@ export async function boot() {
       try {
         await api.login(m[1])
       } catch (e: any) {
-        set({ loadError: e.message || '登录失败' })
+        set({ loadError: e.message || t('登录失败', 'Sign-in failed') })
       }
     }
     const a = await api.auth()
@@ -79,7 +80,7 @@ export async function boot() {
       connect()
     }
   } catch (e: any) {
-    set({ authed: false, loadError: e.message || '连不上服务器' })
+    set({ authed: false, loadError: e.message || t('连不上服务器', 'Cannot reach the server') })
   }
 }
 
@@ -117,7 +118,7 @@ export function refreshSessions(fresh = false): Promise<void> {
       set({ sessions: d.sessions, meta: d.meta || {}, runs, machines: d.machines, loaded: true, loadError: '' })
       for (const r of d.runs) if (!isTerminal(r)) ensureEvents(r.id)
     } catch (e: any) {
-      set({ loadError: e.message || '加载失败', loaded: true })
+      set({ loadError: e.message || t('加载失败', 'Could not load'), loaded: true })
     } finally {
       refreshing = null
     }

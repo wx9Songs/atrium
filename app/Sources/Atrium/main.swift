@@ -14,6 +14,10 @@ let kServerURL = "serverURL"
 let kSignInCommand = "signInCommand"
 let defaultServerURL = "http://127.0.0.1:13005"
 
+/// Menus and dialogs follow the system language: Chinese if it comes first, English otherwise.
+let useChinese = (Locale.preferredLanguages.first ?? "").hasPrefix("zh")
+func L(_ zh: String, _ en: String) -> String { useChinese ? zh : en }
+
 func serverURL() -> URL {
     let s = (defaults.string(forKey: kServerURL) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     return URL(string: s.isEmpty ? defaultServerURL : s) ?? URL(string: defaultServerURL)!
@@ -88,43 +92,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "关于 Atrium", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: L("关于 Atrium", "About Atrium"), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "设置…", action: #selector(showSettings), keyEquivalent: ",")
-        appMenu.addItem(withTitle: "登录", action: #selector(signInFromMenu), keyEquivalent: "l")
+        appMenu.addItem(withTitle: L("设置…", "Settings…"), action: #selector(showSettings), keyEquivalent: ",")
+        appMenu.addItem(withTitle: L("登录", "Sign In"), action: #selector(signInFromMenu), keyEquivalent: "l")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "隐藏 Atrium", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "退出 Atrium", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: L("隐藏 Atrium", "Hide Atrium"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: L("退出 Atrium", "Quit Atrium"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         main.addItem(appItem)
 
         // Without an Edit menu, ⌘C / ⌘V / ⌘A do not reach the page.
         let editItem = NSMenuItem()
-        let edit = NSMenu(title: "编辑")
-        edit.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
-        edit.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+        let edit = NSMenu(title: L("编辑", "Edit"))
+        edit.addItem(withTitle: L("撤销", "Undo"), action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: L("重做", "Redo"), action: Selector(("redo:")), keyEquivalent: "Z")
         edit.addItem(.separator())
-        edit.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        edit.addItem(withTitle: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        edit.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        edit.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(withTitle: L("剪切", "Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: L("拷贝", "Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: L("粘贴", "Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: L("全选", "Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = edit
         main.addItem(editItem)
 
         let viewItem = NSMenuItem()
-        let view = NSMenu(title: "显示")
-        view.addItem(withTitle: "重新载入", action: #selector(reload), keyEquivalent: "r")
-        view.addItem(withTitle: "回到首页", action: #selector(load), keyEquivalent: "0")
+        let view = NSMenu(title: L("显示", "View"))
+        view.addItem(withTitle: L("重新载入", "Reload"), action: #selector(reload), keyEquivalent: "r")
+        view.addItem(withTitle: L("回到首页", "Home"), action: #selector(load), keyEquivalent: "0")
         view.addItem(.separator())
-        view.addItem(withTitle: "放大", action: #selector(zoomIn), keyEquivalent: "+")
-        view.addItem(withTitle: "缩小", action: #selector(zoomOut), keyEquivalent: "-")
+        view.addItem(withTitle: L("放大", "Zoom In"), action: #selector(zoomIn), keyEquivalent: "+")
+        view.addItem(withTitle: L("缩小", "Zoom Out"), action: #selector(zoomOut), keyEquivalent: "-")
         viewItem.submenu = view
         main.addItem(viewItem)
 
         let windowItem = NSMenuItem()
-        let win = NSMenu(title: "窗口")
-        win.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        win.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        let win = NSMenu(title: L("窗口", "Window"))
+        win.addItem(withTitle: L("最小化", "Minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        win.addItem(withTitle: L("关闭窗口", "Close Window"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         windowItem.submenu = win
         main.addItem(windowItem)
         NSApp.windowsMenu = win
@@ -141,7 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if settingsWindow == nil {
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 250),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            w.title = "Atrium 设置"
+            w.title = L("Atrium 设置", "Atrium Settings")
             w.isReleasedWhenClosed = false
             let v = NSView(frame: w.contentView!.bounds)
 
@@ -152,20 +156,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 l.textColor = small ? .secondaryLabelColor : .labelColor
                 return l
             }
-            v.addSubview(label("服务器地址", 208))
+            v.addSubview(label(L("服务器地址", "Server address"), 208))
             urlField = NSTextField(frame: NSRect(x: 24, y: 180, width: 512, height: 24))
             urlField.placeholderString = defaultServerURL
             v.addSubview(urlField)
-            v.addSubview(label("通过隧道访问时是 \(defaultServerURL)；配了域名就填 https 地址。", 146, small: true))
+            v.addSubview(label(L("通过隧道访问时是 \(defaultServerURL)；配了域名就填 https 地址。", "\(defaultServerURL) when you use the SSH tunnel; your https address if you set up a domain."), 146, small: true))
 
-            v.addSubview(label("登录命令（可选）", 120))
+            v.addSubview(label(L("登录命令（可选）", "Sign-in command (optional)"), 120))
             commandField = NSTextField(frame: NSRect(x: 24, y: 92, width: 512, height: 24))
             commandField.placeholderString = "ssh root@my.server runuser -u atrium -- atrium login-link --base \(defaultServerURL)"
             commandField.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
             v.addSubview(commandField)
-            v.addSubview(label("这条命令需要输出一次性登录链接。填了之后，未登录时应用会自动运行它并完成登录。", 58, small: true))
+            v.addSubview(label(L("这条命令需要输出一次性登录链接。填了之后，未登录时应用会自动运行它并完成登录。", "A command that prints a one-time sign-in link. When set, the app runs it whenever you are signed out."), 58, small: true))
 
-            let save = NSButton(title: "保存", target: self, action: #selector(saveSettings))
+            let save = NSButton(title: L("保存", "Save"), target: self, action: #selector(saveSettings))
             save.frame = NSRect(x: 446, y: 16, width: 90, height: 30)
             save.keyEquivalent = "\r"
             v.addSubview(save)
@@ -232,7 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     }
                 } else if userInitiated {
                     let a = NSAlert()
-                    a.messageText = "登录命令没有输出登录链接"
+                    a.messageText = L("登录命令没有输出登录链接", "The sign-in command printed no sign-in link")
                     a.informativeText = String((errText.isEmpty ? text : errText).suffix(600))
                     a.runModal()
                 }
@@ -265,10 +269,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             let c = UNMutableNotificationContent()
             let name = m["title"] as? String ?? ""
             switch kind {
-            case "permission": c.title = "需要你确认"
-            case "done": c.title = "已完成"
-            case "stopped": c.title = "已停止"
-            default: c.title = "运行出错"
+            case "permission": c.title = L("需要你确认", "Needs your OK")
+            case "done": c.title = L("已完成", "Done")
+            case "stopped": c.title = L("已停止", "Stopped")
+            default: c.title = L("运行出错", "Run failed")
             }
             let detail = m["detail"] as? String ?? ""
             c.body = detail.isEmpty ? name : "\(name)\n\(detail)"
@@ -320,10 +324,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         button{font:inherit;padding:7px 18px;border-radius:9px;border:0;background:#3b5bdb;color:#fff;margin-top:8px}
         code{font:12px ui-monospace,Menlo,monospace}
         </style></head><body><div>
-        <h3>连不上 Atrium</h3>
-        <p>地址：<code>\(serverURL().absoluteString)</code><br>\(error.localizedDescription)</p>
-        <p>如果是通过隧道访问，请确认这台电脑上的隧道在运行；地址可以在「设置」（⌘,）里修改。</p>
-        <button onclick="location.href='\(serverURL().absoluteString)'">重试</button>
+        <h3>\(L("连不上 Atrium", "Cannot reach Atrium"))</h3>
+        <p>\(L("地址：", "Address: "))<code>\(serverURL().absoluteString)</code><br>\(error.localizedDescription)</p>
+        <p>\(L("如果是通过隧道访问，请确认这台电脑上的隧道在运行；地址可以在「设置」（⌘,）里修改。", "If you use the SSH tunnel, check that it is running on this Mac. The address can be changed in Settings (⌘,)."))</p>
+        <button onclick="location.href='\(serverURL().absoluteString)'">\(L("重试", "Retry"))</button>
         </div></body></html>
         """
         webView.loadHTMLString(html, baseURL: nil)

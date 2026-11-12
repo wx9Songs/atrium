@@ -6,6 +6,7 @@ import { Icon, Spinner } from './icons'
 import { highlight, renderMarkdown } from './md'
 import { commandOf, field, kindNames, parseInput, ToolKind, toolView } from './tools'
 import { clockTime, copyText, dayLabel, ms } from './util'
+import { t as tr } from './i18n'
 
 type Step =
   | { type: 'tool'; tool: Tool; msg: Msg; index: number; key: string }
@@ -105,7 +106,7 @@ const UserBubble = memo(function UserBubble({ msg }: { msg: Msg }) {
         {text}
         {long && (
           <button className="linkbtn more" onClick={() => setOpen(!open)}>
-            {open ? '收起' : '展开全部'}
+            {open ? tr('收起', 'Show less') : tr('展开全部', 'Show all')}
           </button>
         )}
       </div>
@@ -203,7 +204,7 @@ function ToolDetail({ step, sessionId }: { step: Extract<Step, { type: 'tool' }>
           {edits.length > 0 ? (
             edits.map((e, i) => <DiffBlock key={i} oldText={String(e.old_string ?? '')} newText={String(e.new_string ?? '')} />)
           ) : Array.isArray(obj?.changes) ? (
-            <ul className="plain">{obj.changes.map((c: any, i: number) => <li key={i}>{c.kind || '修改'} {c.path}</li>)}</ul>
+            <ul className="plain">{obj.changes.map((c: any, i: number) => <li key={i}>{c.kind || tr('修改', 'change')} {c.path}</li>)}</ul>
           ) : (
             <Pre text={typeof obj?.patch === 'string' ? obj.patch : typeof obj?.input === 'string' ? obj.input : t.input} lang="diff" />
           )}
@@ -279,7 +280,7 @@ function ToolDetail({ step, sessionId }: { step: Extract<Step, { type: 'tool' }>
       {body}
       {canLoad && (
         <button className="linkbtn" onClick={load} disabled={loading}>
-          {loading ? '加载中…' : `显示完整内容（约 ${Math.max(1, Math.round(((t.resultLen || 0) + (t.inputLen || 0)) / 1024))} KB）`}
+          {loading ? tr('加载中…', 'Loading…') : tr(`显示完整内容（约 ${Math.max(1, Math.round(((t.resultLen || 0) + (t.inputLen || 0)) / 1024))} KB）`, `Show everything (about ${Math.max(1, Math.round(((t.resultLen || 0) + (t.inputLen || 0)) / 1024))} KB)`)}
         </button>
       )}
     </div>
@@ -294,7 +295,7 @@ function StepRow({ step, sessionId }: { step: Step; sessionId?: string }) {
       <div className={'step' + (open ? ' open' : '')}>
         <button className="step-head" onClick={() => setOpen(!open)}>
           <Icon name={isThink ? 'brain' : 'alert'} size={14} className="kind" />
-          <span className="lbl">{isThink ? '思考过程' : '系统通知'}</span>
+          <span className="lbl">{isThink ? tr('思考过程', 'Thinking') : tr('系统通知', 'System note')}</span>
           <span className="sum">{isThink ? '' : step.text.replace(/<[^>]+>/g, ' ').trim().slice(0, 80)}</span>
           <Icon name={open ? 'down' : 'right'} size={13} className="chev" />
         </button>
@@ -322,7 +323,7 @@ function StepRow({ step, sessionId }: { step: Step; sessionId?: string }) {
 function summarize(steps: Step[]): string {
   const counts = new Map<string, number>()
   for (const s of steps) {
-    const name = s.type === 'tool' ? kindNames[toolView(s.tool).kind] : s.type === 'thinking' ? '思考' : '系统通知'
+    const name = s.type === 'tool' ? kindNames[toolView(s.tool).kind] : s.type === 'thinking' ? tr('思考', 'thinking') : tr('系统通知', 'system notes')
     counts.set(name, (counts.get(name) || 0) + 1)
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, n]) => (n > 1 ? `${k} ×${n}` : k)).join(' · ')
@@ -337,7 +338,7 @@ const StepGroup = memo(function StepGroup({ steps, live, sessionId }: { steps: S
       <div className="steps">
         <button className="steps-head" onClick={() => setOpen(true)}>
           <Icon name="layers" size={14} className="kind" />
-          <span className="lbl">{steps.length} 个步骤</span>
+          <span className="lbl">{tr(`${steps.length} 个步骤`, `${steps.length} steps`)}</span>
           <span className="sum">{summarize(steps)}</span>
           <Icon name="right" size={13} className="chev" />
         </button>
@@ -352,7 +353,7 @@ const StepGroup = memo(function StepGroup({ steps, live, sessionId }: { steps: S
       {collapsible && (
         <button className="steps-head" onClick={() => setOpen(false)}>
           <Icon name="layers" size={14} className="kind" />
-          <span className="lbl">{steps.length} 个步骤</span>
+          <span className="lbl">{tr(`${steps.length} 个步骤`, `${steps.length} steps`)}</span>
           <span className="sum">{summarize(steps)}</span>
           <Icon name="down" size={13} className="chev" />
         </button>
@@ -360,7 +361,7 @@ const StepGroup = memo(function StepGroup({ steps, live, sessionId }: { steps: S
       {hidden > 0 && (
         <button className="steps-head" onClick={() => setOpen(true)}>
           <Icon name="layers" size={14} className="kind" />
-          <span className="lbl">前面还有 {hidden} 个步骤</span>
+          <span className="lbl">{tr(`前面还有 ${hidden} 个步骤`, `${hidden} earlier steps`)}</span>
           <span className="sum" />
           <Icon name="right" size={13} className="chev" />
         </button>
@@ -381,7 +382,7 @@ export function Transcript({ msgs, sessionId, focusOrd }: { msgs: Msg[]; session
     if (code) {
       copyText(code.textContent || '')
       const old = btn.textContent
-      btn.textContent = '已复制'
+      btn.textContent = tr('已复制', 'Copied')
       setTimeout(() => (btn.textContent = old), 1200)
     }
   }
@@ -406,7 +407,7 @@ export function Transcript({ msgs, sessionId, focusOrd }: { msgs: Msg[]; session
           case 'steps':
             return <StepGroup key={b.key} steps={b.steps} live={b.live} sessionId={sessionId} />
           case 'compact':
-            return <div key={b.key} className="daysep compact"><span>更早的内容已被压缩成摘要</span></div>
+            return <div key={b.key} className="daysep compact"><span>{tr('更早的内容已被压缩成摘要', 'Earlier messages were compacted into a summary')}</span></div>
           case 'error':
             return (
               <div key={b.key} className="note error">

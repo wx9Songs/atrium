@@ -14,7 +14,9 @@ Claude Code and Codex keep their sessions on the machine where they ran. With a 
 
 It is self-hosted and for one person: your server, your machines, your transcripts.
 
-> **Status: early.** It runs the author's daily setup (two Macs, two Linux containers, one small VPS). The install scripts are derived from that working deployment but have not yet been exercised on a clean server. The interface is in Chinese only for now.
+The page and the desktop app come in English and Chinese. The page follows the browser's language on first visit; switch any time from the ⋯ menu at the bottom of the sidebar. The desktop app's menus follow the system language.
+
+> **Status: early.** It runs the author's daily setup (two Macs, two Linux containers, one small VPS). The install scripts are derived from that working deployment but have not yet been exercised on a clean server. The interface is available in English and Chinese.
 
 ## How it works
 

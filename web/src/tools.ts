@@ -1,6 +1,7 @@
 // Turns a raw tool call (from the archive or from a live run) into something
 // readable: a kind, a short Chinese label and a one-line summary.
 import { Tool } from './api'
+import { t as tr } from './i18n'
 
 export type ToolKind =
   | 'bash' | 'read' | 'write' | 'edit' | 'search' | 'task' | 'todo' | 'web' | 'question' | 'plan' | 'skill' | 'other'
@@ -95,7 +96,7 @@ function kindOf(t: Tool): ToolKind {
 
 export function prettyToolName(n: string): string {
   const m = n.match(/^mcp__(.+?)__(.+)$/)
-  if (m) return `${m[1].replace(/^[0-9a-f-]{20,}$/i, '连接器').replace(/_/g, ' ')} · ${m[2].replace(/_/g, ' ')}`
+  if (m) return `${m[1].replace(/^[0-9a-f-]{20,}$/i, tr('连接器', 'connector')).replace(/_/g, ' ')} · ${m[2].replace(/_/g, ' ')}`
   return n
 }
 
@@ -105,12 +106,12 @@ export function toolView(t: Tool): ToolView {
   switch (kind) {
     case 'bash': {
       const desc = field(t, obj, 'description')
-      return { kind, label: '运行命令', summary: desc || firstLine(commandOf(t, obj)) }
+      return { kind, label: tr('运行命令', 'Run'), summary: desc || firstLine(commandOf(t, obj)) }
     }
     case 'read':
-      return { kind, label: '读取', summary: base(field(t, obj, 'file_path', 'path', 'notebook_path')) }
+      return { kind, label: tr('读取', 'Read'), summary: base(field(t, obj, 'file_path', 'path', 'notebook_path')) }
     case 'write':
-      return { kind, label: '写入', summary: base(field(t, obj, 'file_path', 'path')) }
+      return { kind, label: tr('写入', 'Write'), summary: base(field(t, obj, 'file_path', 'path')) }
     case 'edit': {
       let p = field(t, obj, 'file_path', 'path', 'notebook_path')
       if (!p && Array.isArray(obj?.changes)) p = obj.changes.map((c: any) => c.path).filter(Boolean).join('、')
@@ -118,28 +119,29 @@ export function toolView(t: Tool): ToolView {
         const m = (t.input || '').match(/\*\*\* (?:Update|Add|Delete) File: (.+)/)
         if (m) p = m[1]
       }
-      return { kind, label: '编辑', summary: base(p) }
+      return { kind, label: tr('编辑', 'Edit'), summary: base(p) }
     }
     case 'search':
-      return { kind, label: '搜索', summary: firstLine(field(t, obj, 'pattern', 'query', 'path'), 90) }
+      return { kind, label: tr('搜索', 'Search'), summary: firstLine(field(t, obj, 'pattern', 'query', 'path'), 90) }
     case 'task':
-      return { kind, label: '子任务', summary: firstLine(field(t, obj, 'description', 'prompt'), 90) }
+      return { kind, label: tr('子任务', 'Subtask'), summary: firstLine(field(t, obj, 'description', 'prompt'), 90) }
     case 'todo':
-      return { kind, label: '更新待办', summary: '' }
+      return { kind, label: tr('更新待办', 'Update todos'), summary: '' }
     case 'web':
-      return { kind, label: '联网', summary: firstLine(field(t, obj, 'query', 'url'), 90) }
+      return { kind, label: tr('联网', 'Web'), summary: firstLine(field(t, obj, 'query', 'url'), 90) }
     case 'question':
-      return { kind, label: '向你提问', summary: firstLine(obj?.questions?.[0]?.question || '', 90) }
+      return { kind, label: tr('向你提问', 'Question'), summary: firstLine(obj?.questions?.[0]?.question || '', 90) }
     case 'plan':
-      return { kind, label: /Enter/i.test(t.name) ? '进入计划模式' : '提交计划', summary: '' }
+      return { kind, label: /Enter/i.test(t.name) ? tr('进入计划模式', 'Enter plan mode') : tr('提交计划', 'Submit plan'), summary: '' }
     case 'skill':
-      return { kind, label: '使用技能', summary: field(t, obj, 'skill', 'command') }
+      return { kind, label: tr('使用技能', 'Skill'), summary: field(t, obj, 'skill', 'command') }
     default:
       return { kind, label: prettyToolName(t.name), summary: firstLine(field(t, obj, 'description', 'query', 'prompt', 'path', 'url'), 80) }
   }
 }
 
 export const kindNames: Record<ToolKind, string> = {
-  bash: '运行命令', read: '读取文件', write: '写入文件', edit: '编辑文件', search: '搜索', task: '子任务',
-  todo: '待办', web: '联网', question: '提问', plan: '计划', skill: '技能', other: '其他工具',
+  bash: tr('运行命令', 'commands'), read: tr('读取文件', 'reads'), write: tr('写入文件', 'writes'), edit: tr('编辑文件', 'edits'),
+  search: tr('搜索', 'searches'), task: tr('子任务', 'subtasks'), todo: tr('待办', 'todos'), web: tr('联网', 'web'),
+  question: tr('提问', 'questions'), plan: tr('计划', 'plan'), skill: tr('技能', 'skills'), other: tr('其他工具', 'other tools'),
 }

@@ -6,6 +6,7 @@ import { allSessions, liveIndex, runSessionKey } from './derive'
 import { AgentTag, Icon, Spinner } from './icons'
 import { signOut, useStore } from './store'
 import { displayTitle, folderName, imeKey, machineLabel, ms, shortTime, timeBucket } from './util'
+import { t, lang, setLang } from './i18n'
 
 function usePersisted<T>(key: string, def: T): [T, (v: T) => void] {
   const [v, setV] = useState<T>(() => {
@@ -110,7 +111,7 @@ export function Sidebar({
       let g: Group
       if (groupBy === 'project') {
         const key = `${s.machine}|${s.cwd || ''}`
-        g = map.get(key) || { key, label: folderName(s.cwd) || '（未知目录）', sub: machineLabel(machines, s.machine), title: s.cwd, items: [] }
+        g = map.get(key) || { key, label: folderName(s.cwd) || t('（未知目录）', '(unknown folder)'), sub: machineLabel(machines, s.machine), title: s.cwd, items: [] }
         map.set(key, g)
       } else {
         const b = timeBucket(ms(s.ended), now)
@@ -136,7 +137,7 @@ export function Sidebar({
       <button key={s.id} className={'srow' + (s.id === currentId ? ' active' : '') + (m?.hidden ? ' dimmed' : '')} onClick={() => onOpen(s.id)}>
         <div className="srow-top">
           <span className="srow-title">{displayTitle(s, m)}</span>
-          {st === 'permission' ? <span className="badge warn">待确认</span> : st === 'running' ? <Spinner size={12} /> : <span className="srow-time">{shortTime(ms(s.ended))}</span>}
+          {st === 'permission' ? <span className="badge warn">{t('待确认', 'Needs you')}</span> : st === 'running' ? <Spinner size={12} /> : <span className="srow-time">{shortTime(ms(s.ended))}</span>}
         </div>
         <div className="srow-meta">
           <AgentTag agent={s.agent} />
@@ -150,48 +151,48 @@ export function Sidebar({
   return (
     <aside className="sidebar">
       <div className="side-head">
-        <div className="brand"><span className="logo" />Atrium<span className="brand-sub">中庭</span></div>
-        <button className="btn primary sm" onClick={onNew}><Icon name="plus" size={15} />新会话</button>
+        <div className="brand"><span className="logo" />Atrium{lang === 'zh' && <span className="brand-sub">中庭</span>}</div>
+        <button className="btn primary sm" onClick={onNew}><Icon name="plus" size={15} />{t('新会话', 'New')}</button>
       </div>
 
       <div className="side-search">
         <Icon name="search" size={15} />
         <input
           value={query}
-          placeholder="筛选标题、目录…"
+          placeholder={t('筛选标题、目录…', 'Filter by title or folder…')}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !imeKey(e)) onSearch() }}
         />
-        <button className="kbd" onClick={onSearch} title="搜索所有对话内容">全文 ⌘K</button>
+        <button className="kbd" onClick={onSearch} title={t('搜索所有对话内容', 'Search inside every conversation')}>{t('全文', 'Search')} ⌘K</button>
       </div>
 
       <div className="chips">
-        <button className={'chip' + (pickedSet.size === 0 ? ' on' : '')} onClick={() => setPicked([])} title="显示所有机器的会话">全部机器</button>
+        <button className={'chip' + (pickedSet.size === 0 ? ' on' : '')} onClick={() => setPicked([])} title={t('显示所有机器的会话', 'Show sessions from every machine')}>{t('全部机器', 'All machines')}</button>
         {machineChips.map((m) => (
           <button key={m.name} className={'chip' + (pickedSet.has(m.name) ? ' on' : '')} onClick={() => toggleMachine(m.name)}
-            title={m.runner ? (m.online ? '在线，可以操控' : '不在线，只能看历史') : '只有历史记录'}>
+            title={m.runner ? (m.online ? t('在线，可以操控', 'Online: you can work here') : t('不在线，只能看历史', 'Offline: history only')) : t('只有历史记录', 'History only')}>
             <span className={'dot ' + (m.runner ? (m.online ? 'on' : 'off') : 'none')} />{m.label}
           </button>
         ))}
       </div>
       <div className="chips second">
-        {[['', '全部'], ['claude', 'Claude'], ['codex', 'Codex']].map(([v, l]) => (
+        {[['', t('全部', 'All')], ['claude', 'Claude'], ['codex', 'Codex']].map(([v, l]) => (
           <button key={v} className={'chip' + (agent === v ? ' on' : '')} onClick={() => setAgent(v)}>{l}</button>
         ))}
         <span className="grow" />
-        <div className="seg" title="分组方式">
-          <button className={groupBy === 'time' ? 'on' : ''} onClick={() => setGroupBy('time')}>按时间</button>
-          <button className={groupBy === 'project' ? 'on' : ''} onClick={() => setGroupBy('project')}>按项目</button>
+        <div className="seg" title={t('分组方式', 'Group by')}>
+          <button className={groupBy === 'time' ? 'on' : ''} onClick={() => setGroupBy('time')}>{t('按时间', 'Date')}</button>
+          <button className={groupBy === 'project' ? 'on' : ''} onClick={() => setGroupBy('project')}>{t('按项目', 'Project')}</button>
         </div>
       </div>
 
       <div className="slist">
-        {!loaded && <div className="side-note"><Spinner size={14} /> 正在加载会话…</div>}
+        {!loaded && <div className="side-note"><Spinner size={14} /> {t('正在加载会话…', 'Loading sessions…')}</div>}
         {loadError && <div className="side-note error">{loadError}</div>}
-        {loaded && total === 0 && !loadError && <div className="side-note">没有符合条件的会话。</div>}
+        {loaded && total === 0 && !loadError && <div className="side-note">{t('没有符合条件的会话。', 'No matching sessions.')}</div>}
         {pinned.length > 0 && (
           <div className="sgroup">
-            <div className="sgroup-head"><Icon name="pin" size={12} />置顶</div>
+            <div className="sgroup-head"><Icon name="pin" size={12} />{t('置顶', 'Pinned')}</div>
             {pinned.map(row)}
           </div>
         )}
@@ -214,29 +215,30 @@ export function Sidebar({
           )
         })}
         {!showMinor && minorCount > 0 && !query && (
-          <button className="side-more" onClick={() => setShowMinor(true)}>还有 {minorCount} 个没有对话内容的空会话 · 显示</button>
+          <button className="side-more" onClick={() => setShowMinor(true)}>{t(`还有 ${minorCount} 个没有对话内容的空会话 · 显示`, `${minorCount} empty sessions hidden · Show`)}</button>
         )}
       </div>
 
       <div className="side-foot">
-        <span className={'conn ' + (connected ? 'ok' : 'bad')} title={connected ? '实时更新已连接' : '实时更新断开，正在重连'}>
-          <span className="dot" />{connected ? '已连接' : '重连中…'}
+        <span className={'conn ' + (connected ? 'ok' : 'bad')} title={connected ? t('实时更新已连接', 'Live updates on') : t('实时更新断开，正在重连', 'Live updates lost, reconnecting')}>
+          <span className="dot" />{connected ? t('已连接', 'Connected') : t('重连中…', 'Reconnecting…')}
         </span>
         <span className="grow" />
-        <button className="iconbtn" onClick={onTheme} title="切换深浅色"><Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} /></button>
+        <button className="iconbtn" onClick={onTheme} title={t('切换深浅色', 'Light / dark')}><Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} /></button>
         <div className="menu-wrap">
-          <button className="iconbtn" onClick={() => setMenu(!menu)} title="更多"><Icon name="dots" size={17} /></button>
+          <button className="iconbtn" onClick={() => setMenu(!menu)} title={t('更多', 'More')}><Icon name="dots" size={17} /></button>
           {menu && (
             <>
               <div className="menu-back" onClick={() => setMenu(false)} />
               <div className="menu up">
                 <button onClick={() => { setShowMinor(!showMinor); setMenu(false) }}>
-                  <Icon name={showMinor ? 'check' : 'list'} size={15} />{showMinor ? '隐藏空会话' : `显示空会话（${minorCount}）`}
+                  <Icon name={showMinor ? 'check' : 'list'} size={15} />{showMinor ? t('隐藏空会话', 'Hide empty sessions') : t(`显示空会话（${minorCount}）`, `Show empty sessions (${minorCount})`)}
                 </button>
                 <button onClick={() => { setShowHidden(!showHidden); setMenu(false) }}>
-                  <Icon name={showHidden ? 'check' : 'eye'} size={15} />{showHidden ? '不显示已隐藏的会话' : `显示已隐藏的会话（${hiddenCount}）`}
+                  <Icon name={showHidden ? 'check' : 'eye'} size={15} />{showHidden ? t('不显示已隐藏的会话', 'Leave hidden sessions out') : t(`显示已隐藏的会话（${hiddenCount}）`, `Show hidden sessions (${hiddenCount})`)}
                 </button>
-                <button onClick={() => { setMenu(false); signOut() }}><Icon name="logout" size={15} />退出登录</button>
+                <button onClick={() => { setMenu(false); setLang(lang === 'zh' ? 'en' : 'zh') }}><Icon name="globe" size={15} />{lang === 'zh' ? 'English' : '中文'}</button>
+                <button onClick={() => { setMenu(false); signOut() }}><Icon name="logout" size={15} />{t('退出登录', 'Sign out')}</button>
               </div>
             </>
           )}

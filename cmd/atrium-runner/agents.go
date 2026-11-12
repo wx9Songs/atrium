@@ -187,7 +187,7 @@ func clipText(s string, max int) string {
 	for start < len(s) && s[start]&0xC0 == 0x80 {
 		start++
 	}
-	return s[:head] + fmt.Sprintf("\n…（中间省略 %d 字节）…\n", len(s)-head-(len(s)-start)) + s[start:]
+	return s[:head] + fmt.Sprintf("\n… (%d bytes omitted) …\n", len(s)-head-(len(s)-start)) + s[start:]
 }
 
 // ====================================================================
@@ -267,17 +267,17 @@ func (p *proc) runClaude() error {
 	r, job := p.r, p.job
 	bin, err := exec.LookPath("claude")
 	if err != nil {
-		return errors.New("这台机器上找不到 claude 命令")
+		return bi("这台机器上找不到 claude 命令", "The claude command was not found on this machine")
 	}
 	env := os.Environ()
 	cwd := job.Cwd
 	if !job.IsNew {
 		if job.NativeID == "" {
-			return errors.New("缺少会话 ID")
+			return bi("缺少会话 ID", "Missing session ID")
 		}
 		file, store := r.findClaudeSession(job.NativeID)
 		if file == "" {
-			return errors.New("在这台机器上找不到这个会话的记录文件（可能已被清理，或者它是在别的机器上产生的）")
+			return bi("在这台机器上找不到这个会话的记录文件（可能已被清理，或者它是在别的机器上产生的）", "This session's transcript is not on this machine (it may have been cleaned up, or it was made on another machine)")
 		}
 		if c := claudeCwd(file); c != "" {
 			cwd = c
@@ -290,7 +290,7 @@ func (p *proc) runClaude() error {
 		}
 	}
 	if cwd == "" || !isDir(cwd) {
-		return fmt.Errorf("工作目录不存在：%s", cwd)
+		return bif("工作目录不存在：%s", "The working directory does not exist: %s", cwd)
 	}
 	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio"}
 	if !job.IsNew {
@@ -376,7 +376,7 @@ func (p *proc) runClaude() error {
 			if isErr {
 				resultErr = res
 				if resultErr == "" {
-					resultErr = "运行出错（" + str(m, "subtype") + "）"
+					resultErr = "run failed (" + str(m, "subtype") + ")"
 				}
 			}
 			r.emit(job.ID, "agent", map[string]any{
@@ -404,22 +404,22 @@ func (p *proc) runClaude() error {
 
 	stderrText, waitErr, startErr := p.launch(bin, args, cwd, env, true, onLine)
 	if startErr != nil {
-		return fmt.Errorf("启动 claude 失败：%v", startErr)
+		return bif("启动 claude 失败：%v", "Could not start claude: %v", startErr)
 	}
 	if resultErr != "" {
 		if strings.Contains(resultErr, "/login") {
-			return errors.New("这台机器上的 Claude 命令行还没有登录。请在那台机器的终端里运行 claude 并完成 /login，然后再试。")
+			return bi("这台机器上的 Claude 命令行还没有登录。请在那台机器的终端里运行 claude 并完成 /login，然后再试。", "The Claude CLI on this machine is not signed in. Run claude in a terminal there, complete /login, then try again.")
 		}
 		return errors.New(resultErr)
 	}
 	if !gotResult {
 		if stderrText != "" {
-			return fmt.Errorf("claude 意外退出：%s", clipText(stderrText, 1500))
+			return bif("claude 意外退出：%s", "claude exited unexpectedly: %s", clipText(stderrText, 1500))
 		}
 		if waitErr != nil {
-			return fmt.Errorf("claude 意外退出：%v", waitErr)
+			return bif("claude 意外退出：%v", "claude exited unexpectedly: %v", waitErr)
 		}
-		return errors.New("claude 没有返回结果就退出了")
+		return bi("claude 没有返回结果就退出了", "claude exited without a result")
 	}
 	return nil
 }
@@ -503,14 +503,14 @@ func slimClaude(m map[string]any) map[string]any {
 						if str(pm, "type") == "text" {
 							sb.WriteString(str(pm, "text"))
 						} else if str(pm, "type") == "image" {
-							sb.WriteString("[图片]")
+							sb.WriteString("[image]")
 						}
 					}
 					tr["content"] = clipText(sb.String(), 24000)
 				}
 				blocks = append(blocks, tr)
 			case "image":
-				blocks = append(blocks, map[string]any{"type": "text", "text": "[图片]"})
+				blocks = append(blocks, map[string]any{"type": "text", "text": "[image]"})
 			}
 		}
 		if len(blocks) == 0 {
@@ -585,7 +585,7 @@ func (p *proc) runCodex() error {
 	r, job := p.r, p.job
 	bin, err := exec.LookPath("codex")
 	if err != nil {
-		return errors.New("这台机器上找不到 codex 命令")
+		return bi("这台机器上找不到 codex 命令", "The codex command was not found on this machine")
 	}
 	env := os.Environ()
 	sandbox := map[string]string{"readonly": "read-only", "edits": "workspace-write", "full": "danger-full-access"}[job.Mode]
@@ -597,11 +597,11 @@ func (p *proc) runCodex() error {
 		}
 	} else {
 		if job.NativeID == "" {
-			return errors.New("缺少会话 ID")
+			return bi("缺少会话 ID", "Missing session ID")
 		}
 		file, home := r.findCodexSession(job.NativeID)
 		if file == "" {
-			return errors.New("在这台机器上找不到这个会话的记录文件（可能已被清理，或者它是在别的机器上产生的）")
+			return bi("在这台机器上找不到这个会话的记录文件（可能已被清理，或者它是在别的机器上产生的）", "This session's transcript is not on this machine (it may have been cleaned up, or it was made on another machine)")
 		}
 		home = r.usableCodexHome(file, home)
 		if home == filepath.Join(r.home, ".codex") {
@@ -623,7 +623,7 @@ func (p *proc) runCodex() error {
 	}
 	args = append(args, job.Prompt)
 	if job.Cwd == "" || !isDir(job.Cwd) {
-		return fmt.Errorf("工作目录不存在：%s", job.Cwd)
+		return bif("工作目录不存在：%s", "The working directory does not exist: %s", job.Cwd)
 	}
 
 	turnErr := ""
@@ -652,19 +652,19 @@ func (p *proc) runCodex() error {
 	}
 	stderrText, waitErr, startErr := p.launch(bin, args, job.Cwd, env, false, onLine)
 	if startErr != nil {
-		return fmt.Errorf("启动 codex 失败：%v", startErr)
+		return bif("启动 codex 失败：%v", "Could not start codex: %v", startErr)
 	}
 	if turnErr != "" {
 		return errors.New(clipText(turnErr, 1500))
 	}
 	if !completed {
 		if stderrText != "" {
-			return fmt.Errorf("codex 意外退出：%s", clipText(stderrText, 1500))
+			return bif("codex 意外退出：%s", "codex exited unexpectedly: %s", clipText(stderrText, 1500))
 		}
 		if waitErr != nil {
-			return fmt.Errorf("codex 意外退出：%v", waitErr)
+			return bif("codex 意外退出：%v", "codex exited unexpectedly: %v", waitErr)
 		}
-		return errors.New("codex 没有完成这一轮就退出了")
+		return bi("codex 没有完成这一轮就退出了", "codex exited before finishing the turn")
 	}
 	return nil
 }

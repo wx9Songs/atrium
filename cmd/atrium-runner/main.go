@@ -14,7 +14,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -237,7 +236,7 @@ func (r *Runner) flusher() {
 func (r *Runner) reply(id string, data any, err error) {
 	rep := map[string]any{"id": id, "ok": err == nil, "data": data}
 	if err != nil {
-		rep["error"] = err.Error()
+		rep["error_zh"], rep["error"] = both(err)
 	}
 	if e := r.request("POST", "/api/runner/reply", rep, nil, 20*time.Second); e != nil {
 		log.Printf("reply failed: %v", e)
@@ -351,7 +350,7 @@ func (r *Runner) start(job Job) {
 	case "codex":
 		err = p.runCodex()
 	default:
-		err = fmt.Errorf("不支持的助手：%s", job.Agent)
+		err = bif("不支持的助手：%s", "Unsupported agent: %s", job.Agent)
 	}
 
 	r.mu.Lock()
@@ -360,7 +359,7 @@ func (r *Runner) start(job Job) {
 
 	exit := map[string]any{"stopped": p.isStopped()}
 	if err != nil && !p.isStopped() {
-		exit["error"] = err.Error()
+		exit["error_zh"], exit["error"] = both(err)
 	}
 	r.emit(job.ID, "exit", exit)
 	r.sync()
@@ -414,7 +413,7 @@ func (r *Runner) ls(path string) (any, error) {
 	}
 	path = filepath.Clean(path)
 	if !filepath.IsAbs(path) {
-		return nil, errors.New("需要绝对路径")
+		return nil, bi("需要绝对路径", "An absolute path is required")
 	}
 	entries, err := os.ReadDir(path)
 	if err != nil {
@@ -429,7 +428,7 @@ func (r *Runner) ls(path string) (any, error) {
 			}
 		}
 		if err != nil {
-			return nil, fmt.Errorf("读不了这个目录：%v", err)
+			return nil, bif("读不了这个目录：%v", "Cannot read this folder: %v", err)
 		}
 	}
 	names := []map[string]string{}

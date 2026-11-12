@@ -32,7 +32,7 @@ func (s *Server) recentRuns() []Run {
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	list, etag, err := s.arc.Sessions(r.Context(), r.URL.Query().Get("fresh") == "1")
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, "存档服务暂时连不上："+err.Error())
+		writeErr(w, http.StatusBadGateway, L(r, "存档服务暂时连不上：", "The archive is unreachable: ")+err.Error())
 		return
 	}
 	writeJSON(w, 200, map[string]any{
@@ -72,7 +72,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 200, map[string]any{"messages": []Msg{}, "more": false, "missing": true})
 			return
 		}
-		writeErr(w, http.StatusBadGateway, "读取会话内容失败："+err.Error())
+		writeErr(w, http.StatusBadGateway, L(r, "读取会话内容失败：", "Could not read the session: ")+err.Error())
 		return
 	}
 	if page.Messages == nil {
@@ -124,7 +124,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	hits, err := s.arc.Search(r.Context(), q, 40)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, "搜索失败："+err.Error())
+		writeErr(w, http.StatusBadGateway, L(r, "搜索失败：", "Search failed: ")+err.Error())
 		return
 	}
 	writeJSON(w, 200, map[string]any{"hits": hits})
@@ -169,11 +169,11 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(body.Prompt) == "" {
-		writeErr(w, 400, "消息不能为空")
+		writeErr(w, 400, L(r, "消息不能为空", "The message is empty"))
 		return
 	}
 	if !validModes[body.Mode] {
-		writeErr(w, 400, "未知的权限模式")
+		writeErr(w, 400, L(r, "未知的权限模式", "Unknown permission mode"))
 		return
 	}
 	run := Run{
@@ -187,7 +187,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 			// A session started here that the archive has not indexed yet.
 			prev := s.runs.List(func(x *Run) bool { return x.SessionID == body.SessionID && x.NativeID != "" })
 			if len(prev) == 0 {
-				writeErr(w, 404, "找不到这个会话")
+				writeErr(w, 404, L(r, "找不到这个会话", "Session not found"))
 				return
 			}
 			p := prev[len(prev)-1]
@@ -195,30 +195,30 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 		busy := s.runs.List(func(x *Run) bool { return x.SessionID == run.SessionID && !terminal(x.Status) })
 		if len(busy) > 0 {
-			writeErr(w, http.StatusConflict, "这个会话正在运行中，请等它结束或先停止")
+			writeErr(w, http.StatusConflict, L(r, "这个会话正在运行中，请等它结束或先停止", "This session is running. Wait for it to finish or stop it first"))
 			return
 		}
 	} else {
 		if body.Agent != "claude" && body.Agent != "codex" {
-			writeErr(w, 400, "请选择 Claude 或 Codex")
+			writeErr(w, 400, L(r, "请选择 Claude 或 Codex", "Choose Claude or Codex"))
 			return
 		}
 		if strings.TrimSpace(body.Cwd) == "" {
-			writeErr(w, 400, "请选择工作目录")
+			writeErr(w, 400, L(r, "请选择工作目录", "Choose a working directory"))
 			return
 		}
 		run.IsNew, run.Agent, run.Machine, run.Cwd = true, body.Agent, body.Machine, strings.TrimSpace(body.Cwd)
 	}
 	if run.Agent != "claude" && run.Agent != "codex" {
-		writeErr(w, 400, "暂不支持操控这种会话："+run.Agent)
+		writeErr(w, 400, L(r, "暂不支持操控这种会话：", "This kind of session cannot be continued yet: ")+run.Agent)
 		return
 	}
 	if !s.mach.has(run.Machine) {
-		writeErr(w, http.StatusConflict, "这台机器没有接入操控，只能查看历史")
+		writeErr(w, http.StatusConflict, L(r, "这台机器没有接入操控，只能查看历史", "This machine has no runner, so it is history only"))
 		return
 	}
 	if !s.mach.online(run.Machine) {
-		writeErr(w, http.StatusConflict, "这台机器现在不在线")
+		writeErr(w, http.StatusConflict, L(r, "这台机器现在不在线", "This machine is offline"))
 		return
 	}
 	run = s.runs.Create(run)
@@ -227,10 +227,11 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		"prompt": run.Prompt, "mode": run.Mode, "model": run.Model, "is_new": run.IsNew,
 	}}
 	if err := s.mach.enqueue(run.Machine, cmd); err != nil {
+		zh, en := both(err)
 		run, _, _ = s.runs.Append(run.ID, "exit", time.Now().UnixMilli(), nil, func(x *Run) {
-			x.Status, x.Error, x.Ended = "error", err.Error(), time.Now().UnixMilli()
+			x.Status, x.Error, x.ErrorZh, x.Ended = "error", en, zh, time.Now().UnixMilli()
 		})
-		writeErr(w, http.StatusConflict, err.Error())
+		writeErr(w, http.StatusConflict, errText(r, err))
 		return
 	}
 	s.bus.Publish("run", map[string]any{"run": run})
@@ -255,7 +256,7 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if run.Perm == nil || run.Perm.RequestID != body.RequestID {
-		writeErr(w, http.StatusConflict, "这个请求已经处理过了")
+		writeErr(w, http.StatusConflict, L(r, "这个请求已经处理过了", "This request was already answered"))
 		return
 	}
 	err := s.mach.enqueue(run.Machine, map[string]any{
@@ -263,7 +264,7 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 		"behavior": body.Behavior, "message": body.Message, "always": body.Always, "input": body.Input,
 	})
 	if err != nil {
-		writeErr(w, http.StatusConflict, err.Error())
+		writeErr(w, http.StatusConflict, errText(r, err))
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
@@ -288,20 +289,24 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	s.mach.enqueue(run.Machine, map[string]any{"id": "c" + randToken(9), "type": "stop", "run_id": run.ID})
 	if run.Status == "queued" || !s.mach.online(run.Machine) {
 		// Nothing on the machine will answer: close the run here.
-		s.finishRun(run.ID, "stopped", "")
+		s.finishRun(run.ID, "stopped", nil)
 	}
 	run, _ = s.runs.Get(run.ID)
 	writeJSON(w, 200, map[string]any{"run": run})
 }
 
-func (s *Server) finishRun(id, status, msg string) {
+func (s *Server) finishRun(id, status string, cause error) {
 	now := time.Now().UnixMilli()
-	data, _ := json.Marshal(map[string]any{"error": msg, "by": "hub"})
+	zh, en := "", ""
+	if cause != nil {
+		zh, en = both(cause)
+	}
+	data, _ := json.Marshal(map[string]any{"error": en, "error_zh": zh, "by": "hub"})
 	run, ev, ok := s.runs.Append(id, "exit", now, data, func(x *Run) {
 		if terminal(x.Status) {
 			return
 		}
-		x.Status, x.Error, x.Ended, x.Perm = status, msg, now, nil
+		x.Status, x.Error, x.ErrorZh, x.Ended, x.Perm = status, en, zh, now, nil
 	})
 	if ok {
 		s.bus.Publish("run", map[string]any{"run": run, "event": ev})
@@ -319,7 +324,7 @@ func (s *Server) handleLs(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := s.mach.rpc(r.Context(), body.Machine, map[string]any{"type": "ls", "path": body.Path}, 12*time.Second)
 	if err != nil {
-		writeErr(w, http.StatusConflict, err.Error())
+		writeErr(w, http.StatusConflict, errText(r, err))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -350,7 +355,7 @@ func (s *Server) handleRunnerHello(w http.ResponseWriter, r *http.Request) {
 		return x.Machine == name && (x.Status == "starting" || x.Status == "running" || x.Status == "permission")
 	}) {
 		if !active[run.ID] {
-			s.finishRun(run.ID, "lost", "这台机器上的后台程序重启了，这次运行被中断")
+			s.finishRun(run.ID, "lost", bi("这台机器上的后台程序重启了，这次运行被中断", "The runner on this machine restarted and the run was interrupted"))
 		}
 	}
 	s.bus.Publish("machines", s.machineList(r.Context()))
@@ -458,10 +463,14 @@ func (s *Server) applyRunEvent(machine string, ev inEvent) {
 		case "exit":
 			var d struct {
 				Error   string `json:"error"`
+				ErrorZh string `json:"error_zh"`
 				Stopped bool   `json:"stopped"`
 			}
 			json.Unmarshal(ev.Data, &d)
-			x.Perm, x.Ended, x.Error = nil, now, d.Error
+			if d.ErrorZh == "" {
+				d.ErrorZh = d.Error
+			}
+			x.Perm, x.Ended, x.Error, x.ErrorZh = nil, now, d.Error, d.ErrorZh
 			switch {
 			case d.Stopped:
 				x.Status = "stopped"

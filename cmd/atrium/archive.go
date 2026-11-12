@@ -116,7 +116,7 @@ func slimSession(x arcSession) Session {
 		title = clip(x.FirstMessage, 70)
 	}
 	if title == "" {
-		title = "（无标题）"
+		title = "" // the page shows its own "untitled"
 	}
 	nid := x.SourceSessionID
 	if nid == "" {
@@ -310,7 +310,7 @@ func flattenResult(s string) string {
 		if txt, ok := p["text"].(string); ok {
 			b.WriteString(txt)
 		} else if ty, _ := p["type"].(string); strings.Contains(ty, "image") {
-			b.WriteString("[图片]")
+			b.WriteString("[image]")
 		}
 	}
 	if b.Len() == 0 {

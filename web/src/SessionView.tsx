@@ -11,8 +11,12 @@ import { Transcript } from './Transcript'
 import {
   copyText, displayTitle, fullTime, imeKey, machineLabel, modeOptions, ms, resumeCommand, runCoveredByArchive, shortPath, statusText,
 } from './util'
+import { lang, t } from './i18n'
 
 const PAGE = 80
+
+/** Run errors are stored in both languages; older ones only in Chinese. */
+export const runError = (r: Run) => (lang === 'zh' ? r.error_zh || r.error : r.error) || ''
 
 export function SessionView({ id, focusOrd, onBack }: { id: string; focusOrd?: number; onBack: () => void }) {
   const sessions = useStore((s) => s.sessions)
@@ -63,7 +67,7 @@ export function SessionView({ id, focusOrd, onBack }: { id: string; focusOrd?: n
         setAtLatest(target === undefined)
         setMerged(coveredNow())
       } catch (e: any) {
-        if (seq === loadSeq.current) setErr(e.message || '加载失败')
+        if (seq === loadSeq.current) setErr(e.message || t('加载失败', 'Could not load'))
       } finally {
         if (seq === loadSeq.current) setLoading(false)
       }
@@ -204,9 +208,9 @@ export function SessionView({ id, focusOrd, onBack }: { id: string; focusOrd?: n
     return (
       <div className="main">
         <div className="empty">
-          <div className="empty-title">找不到这个会话</div>
-          <div className="empty-sub">它可能还没同步到存档，或者已经被隐藏。</div>
-          <button className="btn" onClick={onBack}>返回列表</button>
+          <div className="empty-title">{t('找不到这个会话', 'Session not found')}</div>
+          <div className="empty-sub">{t('它可能还没同步到存档，或者已经被隐藏。', 'It may not be archived yet, or it was hidden.')}</div>
+          <button className="btn" onClick={onBack}>{t('返回列表', 'Back to the list')}</button>
         </div>
       </div>
     )
@@ -218,7 +222,7 @@ export function SessionView({ id, focusOrd, onBack }: { id: string; focusOrd?: n
   return (
     <div className="main">
       <header className="chat-head">
-        <button className="iconbtn only-mobile" onClick={onBack} title="返回列表"><Icon name="back" size={18} /></button>
+        <button className="iconbtn only-mobile" onClick={onBack} title={t('返回列表', 'Back to the list')}><Icon name="back" size={18} /></button>
         <div className="chat-title">
           {renaming ? (
             <input
@@ -236,7 +240,7 @@ export function SessionView({ id, focusOrd, onBack }: { id: string; focusOrd?: n
               }}
             />
           ) : (
-            <h1 title="双击改名" onDoubleClick={() => setRenaming(true)}>{title}</h1>
+            <h1 title={t('双击改名', 'Double-click to rename')} onDoubleClick={() => setRenaming(true)}>{title}</h1>
           )}
           <div className="chat-sub">
             <AgentTag agent={session.agent} />
@@ -245,30 +249,30 @@ export function SessionView({ id, focusOrd, onBack }: { id: string; focusOrd?: n
               {machineLabel(machines, session.machine)}
             </span>
             {session.cwd && <span className="path" title={session.cwd}>{shortPath(session.cwd)}</span>}
-            {session.started && <span className="when">{fullTime(ms(session.started))} 开始</span>}
+            {session.started && <span className="when">{t(`${fullTime(ms(session.started))} 开始`, `started ${fullTime(ms(session.started))}`)}</span>}
           </div>
         </div>
         <div className="chat-actions">
-          <button className={'iconbtn' + (meta?.pinned ? ' active' : '')} title={meta?.pinned ? '取消置顶' : '置顶'} onClick={() => setMeta(id, { pinned: !meta?.pinned })}>
+          <button className={'iconbtn' + (meta?.pinned ? ' active' : '')} title={meta?.pinned ? t('取消置顶', 'Unpin') : t('置顶', 'Pin')} onClick={() => setMeta(id, { pinned: !meta?.pinned })}>
             <Icon name="pin" size={17} />
           </button>
           <div className="menu-wrap">
-            <button className="iconbtn" title="更多" onClick={() => setMenu(!menu)}><Icon name="dots" size={18} /></button>
+            <button className="iconbtn" title={t('更多', 'More')} onClick={() => setMenu(!menu)}><Icon name="dots" size={18} /></button>
             {menu && (
               <>
                 <div className="menu-back" onClick={() => setMenu(false)} />
                 <div className="menu">
-                  <button onClick={() => { setMenu(false); setRenaming(true) }}><Icon name="edit" size={15} />改名</button>
+                  <button onClick={() => { setMenu(false); setRenaming(true) }}><Icon name="edit" size={15} />{t('改名', 'Rename')}</button>
                   {!session.synthetic && (
-                    <button onClick={() => { setMenu(false); copyText(resumeCommand(session)); flash('已复制，可在那台机器的终端里粘贴运行') }}>
-                      <Icon name="terminal" size={15} />复制终端恢复命令
+                    <button onClick={() => { setMenu(false); copyText(resumeCommand(session)); flash(t('已复制，可在那台机器的终端里粘贴运行', 'Copied. Paste it into a terminal on that machine')) }}>
+                      <Icon name="terminal" size={15} />{t('复制终端恢复命令', 'Copy terminal resume command')}
                     </button>
                   )}
-                  <button onClick={() => { setMenu(false); copyText(session.nid || session.id); flash('已复制会话 ID') }}>
-                    <Icon name="copy" size={15} />复制会话 ID
+                  <button onClick={() => { setMenu(false); copyText(session.nid || session.id); flash(t('已复制会话 ID', 'Session ID copied')) }}>
+                    <Icon name="copy" size={15} />{t('复制会话 ID', 'Copy session ID')}
                   </button>
-                  <button onClick={() => { setMenu(false); setMeta(id, { hidden: !meta?.hidden }); flash(meta?.hidden ? '已恢复显示' : '已隐藏，可在侧栏底部"显示隐藏的会话"里找回') }}>
-                    <Icon name={meta?.hidden ? 'eye' : 'eyeoff'} size={15} />{meta?.hidden ? '取消隐藏' : '从列表隐藏'}
+                  <button onClick={() => { setMenu(false); setMeta(id, { hidden: !meta?.hidden }); flash(meta?.hidden ? t('已恢复显示', 'Back in the list') : t('已隐藏，可在侧栏底部"显示隐藏的会话"里找回', 'Hidden. Find it again under "Show hidden sessions" at the bottom of the sidebar')) }}>
+                    <Icon name={meta?.hidden ? 'eye' : 'eyeoff'} size={15} />{meta?.hidden ? t('取消隐藏', 'Unhide') : t('从列表隐藏', 'Hide from the list')}
                   </button>
                 </div>
               </>
@@ -279,30 +283,30 @@ export function SessionView({ id, focusOrd, onBack }: { id: string; focusOrd?: n
 
       <div className="scroller" ref={scroller} onScroll={onScroll}>
         <div className="column">
-          {loading && <div className="loading"><Spinner size={18} /> 正在加载…</div>}
+          {loading && <div className="loading"><Spinner size={18} /> {t('正在加载…', 'Loading…')}</div>}
           {err && (
             <div className="note error">
               <Icon name="alert" size={15} />
               <span>{err}</span>
-              <button className="linkbtn" onClick={() => load(focus)}>重试</button>
+              <button className="linkbtn" onClick={() => load(focus)}>{t('重试', 'Retry')}</button>
             </div>
           )}
           {!loading && more && (
             <div className="loadmore">
-              <button className="linkbtn" onClick={loadMore} disabled={loadingMore}>{loadingMore ? '加载中…' : '加载更早的消息'}</button>
+              <button className="linkbtn" onClick={loadMore} disabled={loadingMore}>{loadingMore ? t('加载中…', 'Loading…') : t('加载更早的消息', 'Load earlier messages')}</button>
             </div>
           )}
-          {!loading && !err && display.length === 0 && <div className="loading">这个会话还没有内容。</div>}
+          {!loading && !err && display.length === 0 && <div className="loading">{t('这个会话还没有内容。', 'Nothing in this session yet.')}</div>}
           <Transcript msgs={display} sessionId={session.synthetic ? undefined : id} focusOrd={focus} />
           {!atLatest && !loading && (
             <div className="loadmore">
-              <button className="btn" onClick={jumpLatest}>正在查看较早的位置 · 回到最新</button>
+              <button className="btn" onClick={jumpLatest}>{t('正在查看较早的位置 · 回到最新', 'Viewing an earlier point · Jump to latest')}</button>
             </div>
           )}
           {failedRun && atLatest && (
             <div className="note error">
               <Icon name="alert" size={15} />
-              <span>{failedRun.error || '这次运行没有成功'}</span>
+              <span>{runError(failedRun) || t('这次运行没有成功', 'This run did not succeed')}</span>
             </div>
           )}
           {active && atLatest && <RunStatus run={active} />}
@@ -311,7 +315,7 @@ export function SessionView({ id, focusOrd, onBack }: { id: string; focusOrd?: n
       </div>
 
       {showJump && (
-        <button className="jump" onClick={jumpLatest} title="回到最新"><Icon name="down" size={18} /></button>
+        <button className="jump" onClick={jumpLatest} title={t('回到最新', 'Jump to latest')}><Icon name="down" size={18} /></button>
       )}
       {toast && <div className="toast">{toast}</div>}
 
@@ -329,7 +333,7 @@ function RunStatus({ run }: { run: Run }) {
     return () => clearInterval(t)
   }, [])
   const secs = Math.max(0, Math.floor((Date.now() - run.created) / 1000))
-  const elapsed = secs >= 60 ? `${Math.floor(secs / 60)} 分 ${secs % 60} 秒` : `${secs} 秒`
+  const elapsed = secs >= 60 ? t(`${Math.floor(secs / 60)} 分 ${secs % 60} 秒`, `${Math.floor(secs / 60)}m ${secs % 60}s`) : t(`${secs} 秒`, `${secs}s`)
   return (
     <div className="runstatus">
       {run.perm ? <PermissionCard run={run} perm={run.perm} /> : (
@@ -363,9 +367,9 @@ function PermissionCard({ run, perm }: { run: Run; perm: PermReq }) {
         for (const q of obj.questions) a[q.question] = (answers[q.question] || []).join(', ')
         input = { ...obj, answers: a }
       }
-      await api.permission(run.id, { request_id: perm.request_id, behavior, always, input, message: behavior === 'deny' ? '用户在会话中心拒绝了这个操作' : undefined })
+      await api.permission(run.id, { request_id: perm.request_id, behavior, always, input, message: behavior === 'deny' ? 'The user denied this action in Atrium.' : undefined })
     } catch (e: any) {
-      setErr(e.message || '发送失败')
+      setErr(e.message || t('发送失败', 'Could not send'))
       setBusy(false)
     }
   }
@@ -374,7 +378,7 @@ function PermissionCard({ run, perm }: { run: Run; perm: PermReq }) {
     const ready = obj.questions.every((q: any) => (answers[q.question] || []).length > 0)
     return (
       <div className="perm">
-        <div className="perm-head"><Icon name="question" size={16} />需要你回答</div>
+        <div className="perm-head"><Icon name="question" size={16} />{t('需要你回答', 'Needs your answer')}</div>
         {obj.questions.map((q: any, i: number) => (
           <div key={i} className="perm-q">
             <div className="q">{q.question}</div>
@@ -403,8 +407,8 @@ function PermissionCard({ run, perm }: { run: Run; perm: PermReq }) {
         ))}
         {err && <div className="perm-err">{err}</div>}
         <div className="perm-actions">
-          <button className="btn primary" disabled={busy || !ready} onClick={() => answer('allow')}>提交回答</button>
-          <button className="btn" disabled={busy} onClick={() => answer('deny')}>跳过</button>
+          <button className="btn primary" disabled={busy || !ready} onClick={() => answer('allow')}>{t('提交回答', 'Submit')}</button>
+          <button className="btn" disabled={busy} onClick={() => answer('deny')}>{t('跳过', 'Skip')}</button>
         </div>
       </div>
     )
@@ -413,7 +417,7 @@ function PermissionCard({ run, perm }: { run: Run; perm: PermReq }) {
   const cmd = v.kind === 'bash' ? commandOf(tool, obj) : ''
   return (
     <div className="perm">
-      <div className="perm-head"><Icon name="shield" size={16} />需要你确认：{v.label}</div>
+      <div className="perm-head"><Icon name="shield" size={16} />{t('需要你确认：', 'Needs your OK: ')}{v.label}</div>
       {perm.description && <div className="perm-desc">{perm.description}</div>}
       {cmd ? (
         <pre className="pre cmd">{cmd}</pre>
@@ -434,9 +438,9 @@ function PermissionCard({ run, perm }: { run: Run; perm: PermReq }) {
       )}
       {err && <div className="perm-err">{err}</div>}
       <div className="perm-actions">
-        <button className="btn primary" disabled={busy} onClick={() => answer('allow')}>允许</button>
-        {canAlways && <button className="btn" disabled={busy} onClick={() => answer('allow', true)}>允许，这类以后不再问</button>}
-        <button className="btn danger" disabled={busy} onClick={() => answer('deny')}>拒绝</button>
+        <button className="btn primary" disabled={busy} onClick={() => answer('allow')}>{t('允许', 'Allow')}</button>
+        {canAlways && <button className="btn" disabled={busy} onClick={() => answer('allow', true)}>{t('允许，这类以后不再问', "Allow, and don't ask again for this")}</button>}
+        <button className="btn danger" disabled={busy} onClick={() => answer('deny')}>{t('拒绝', 'Deny')}</button>
       </div>
     </div>
   )
@@ -473,10 +477,10 @@ function Composer({ session, active, lastEndedMs, hasHubRuns }: { session: Sessi
   }, [text, session.id])
 
   let blocked = ''
-  if (session.agent !== 'claude' && session.agent !== 'codex') blocked = '这种会话暂时只能查看。'
-  else if (!machine?.runner) blocked = `"${machineLabel(machines, session.machine)}"还没有接入操控，这里只能查看历史。`
-  else if (!machine.online) blocked = `"${machine.label}"现在不在线，等它上线后就能继续。`
-  else if (session.synthetic && !session.nid && !active) blocked = '这个会话没有成功启动，请新建一个。'
+  if (session.agent !== 'claude' && session.agent !== 'codex') blocked = t('这种会话暂时只能查看。', 'This kind of session is view-only for now.')
+  else if (!machine?.runner) blocked = t(`"${machineLabel(machines, session.machine)}"还没有接入操控，这里只能查看历史。`, `${machineLabel(machines, session.machine)} has no runner, so this is history only.`)
+  else if (!machine.online) blocked = t(`"${machine.label}"现在不在线，等它上线后就能继续。`, `${machine.label} is offline. You can continue once it is back.`)
+  else if (session.synthetic && !session.nid && !active) blocked = t('这个会话没有成功启动，请新建一个。', 'This session never started. Please start a new one.')
 
   // Heads-up when the session was just written to by something other than us.
   const recentElsewhere = !active && !hasHubRuns && lastEndedMs > 0 && Date.now() - lastEndedMs < 120_000
@@ -491,7 +495,7 @@ function Composer({ session, active, lastEndedMs, hasHubRuns }: { session: Sessi
       putRun(d.run)
       setText('')
     } catch (e: any) {
-      setErr(e.message || '发送失败')
+      setErr(e.message || t('发送失败', 'Could not send'))
     } finally {
       setBusy(false)
     }
@@ -503,7 +507,7 @@ function Composer({ session, active, lastEndedMs, hasHubRuns }: { session: Sessi
       const d = await api.stop(active.id)
       putRun(d.run)
     } catch (e: any) {
-      setErr(e.message || '停止失败')
+      setErr(e.message || t('停止失败', 'Could not stop'))
     }
   }
 
@@ -511,7 +515,7 @@ function Composer({ session, active, lastEndedMs, hasHubRuns }: { session: Sessi
     <div className="composer-wrap">
       <div className="column">
         {recentElsewhere && !blocked && (
-          <div className="hint warn">这个会话一两分钟前还在别处更新，可能正在另一个窗口里运行。两边同时发消息会让记录错乱，建议先停掉那边。</div>
+          <div className="hint warn">{t('这个会话一两分钟前还在别处更新，可能正在另一个窗口里运行。两边同时发消息会让记录错乱，建议先停掉那边。', 'This session changed elsewhere a minute or two ago and may still be running in another window. Writing from both places scrambles the transcript, so stop it there first.')}</div>
         )}
         {err && <div className="hint error">{err}</div>}
         {blocked ? (
@@ -522,7 +526,7 @@ function Composer({ session, active, lastEndedMs, hasHubRuns }: { session: Sessi
               ref={ta}
               rows={1}
               value={text}
-              placeholder={active ? '正在运行，结束后可以继续发消息…' : `接着这个会话继续，发给 ${machine?.label || session.machine} 上的 ${session.agent === 'codex' ? 'Codex' : 'Claude'}`}
+              placeholder={active ? t('正在运行，结束后可以继续发消息…', 'Running. You can send again when it finishes…') : t(`接着这个会话继续，发给 ${machine?.label || session.machine} 上的 ${session.agent === 'codex' ? 'Codex' : 'Claude'}`, `Continue this session with ${session.agent === 'codex' ? 'Codex' : 'Claude'} on ${machine?.label || session.machine}`)}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey && !imeKey(e)) {
@@ -545,11 +549,11 @@ function Composer({ session, active, lastEndedMs, hasHubRuns }: { session: Sessi
                 </select>
               </label>
               <span className="grow" />
-              <span className="keys">Enter 发送 · Shift+Enter 换行</span>
+              <span className="keys">{t('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter for a new line')}</span>
               {active ? (
-                <button className="sendbtn stop" onClick={stop} title="停止"><Icon name="stop" size={15} /></button>
+                <button className="sendbtn stop" onClick={stop} title={t('停止', 'Stop')}><Icon name="stop" size={15} /></button>
               ) : (
-                <button className="sendbtn" onClick={send} disabled={!text.trim() || busy} title="发送"><Icon name="send" size={17} /></button>
+                <button className="sendbtn" onClick={send} disabled={!text.trim() || busy} title={t('发送', 'Send')}><Icon name="send" size={17} /></button>
               )}
             </div>
           </div>

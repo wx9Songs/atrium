@@ -194,7 +194,7 @@ func (s *Server) browser(h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if !s.authed(r) {
-			writeErr(w, http.StatusUnauthorized, "未登录")
+			writeErr(w, http.StatusUnauthorized, L(r, "未登录", "Not signed in"))
 			return
 		}
 		h(w, r)
@@ -233,25 +233,25 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.loginAllowed() {
-		writeErr(w, http.StatusTooManyRequests, "尝试太频繁，请稍后再试")
+		writeErr(w, http.StatusTooManyRequests, L(r, "尝试太频繁，请稍后再试", "Too many attempts. Try again in a minute"))
 		return
 	}
 	var body struct {
 		Code string `json:"code"`
 	}
 	if err := readJSON(r, &body, 4096); err != nil || len(body.Code) < 16 {
-		writeErr(w, http.StatusUnauthorized, "登录链接无效")
+		writeErr(w, http.StatusUnauthorized, L(r, "登录链接无效", "Invalid sign-in link"))
 		return
 	}
 	p := filepath.Join(s.cfg.dataDir(), "login-codes", sha256hex(body.Code))
 	fi, err := os.Stat(p)
 	if err != nil {
-		writeErr(w, http.StatusUnauthorized, "登录链接无效或已使用过")
+		writeErr(w, http.StatusUnauthorized, L(r, "登录链接无效或已使用过", "This sign-in link is invalid or was already used"))
 		return
 	}
 	os.Remove(p) // one-time
 	if time.Since(fi.ModTime()) > 15*time.Minute {
-		writeErr(w, http.StatusUnauthorized, "登录链接已过期，请重新生成")
+		writeErr(w, http.StatusUnauthorized, L(r, "登录链接已过期，请重新生成", "This sign-in link expired. Make a new one"))
 		return
 	}
 	s.setCookie(w, r, s.newCookieValue(), int(cookieTTL.Seconds()))

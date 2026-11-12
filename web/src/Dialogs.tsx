@@ -6,6 +6,7 @@ import { AgentTag, Icon, Spinner } from './icons'
 import { snippetHtml } from './md'
 import { putRun, useStore } from './store'
 import { displayTitle, folderName, imeKey, machineLabel, modeOptions, ms, shortPath, shortTime } from './util'
+import { t } from './i18n'
 
 // ---------- new session ----------
 
@@ -50,7 +51,7 @@ export function NewSession({ onClose, onStarted }: { onClose: () => void; onStar
     try {
       setBrowse(await api.ls(machine, path))
     } catch (e: any) {
-      setErr(e.message || '读取目录失败')
+      setErr(e.message || t('读取目录失败', 'Could not read the folder'))
     } finally {
       setBrowsing(false)
     }
@@ -67,7 +68,7 @@ export function NewSession({ onClose, onStarted }: { onClose: () => void; onStar
       putRun(d.run)
       onStarted(`run:${d.run.id}`)
     } catch (e: any) {
-      setErr(e.message || '启动失败')
+      setErr(e.message || t('启动失败', 'Could not start'))
       setBusy(false)
     }
   }
@@ -76,47 +77,47 @@ export function NewSession({ onClose, onStarted }: { onClose: () => void; onStar
     <div className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="dialog">
         <div className="dialog-head">
-          <h2>新会话</h2>
+          <h2>{t('新会话', 'New session')}</h2>
           <button className="iconbtn" onClick={onClose}><Icon name="x" size={18} /></button>
         </div>
         {runners.length === 0 ? (
-          <div className="dialog-body"><div className="note">还没有机器接入操控，暂时只能查看历史。</div></div>
+          <div className="dialog-body"><div className="note">{t('还没有机器接入操控，暂时只能查看历史。', 'No machine has a runner yet, so there is history only.')}</div></div>
         ) : (
           <div className="dialog-body">
-            <label className="fl">在哪台机器上</label>
+            <label className="fl">{t('在哪台机器上', 'Machine')}</label>
             <div className="pick">
               {runners.map((x) => (
                 <button key={x.name} className={'pickbtn' + (machine === x.name ? ' on' : '')} disabled={!x.online} onClick={() => setMachine(x.name)}>
-                  <span className={'dot ' + (x.online ? 'on' : 'off')} />{x.label}{!x.online && <i>不在线</i>}
+                  <span className={'dot ' + (x.online ? 'on' : 'off')} />{x.label}{!x.online && <i>{t('不在线', 'offline')}</i>}
                 </button>
               ))}
             </div>
 
-            <label className="fl">用哪个助手</label>
+            <label className="fl">{t('用哪个助手', 'Agent')}</label>
             <div className="pick">
               {['claude', 'codex'].map((a) => (
                 <button key={a} className={'pickbtn' + (agent === a ? ' on' : '')} onClick={() => { setAgent(a); setMode('machine') }}>
                   {a === 'claude' ? 'Claude' : 'Codex'}
                   {agentsInfo[a]?.version && <i>{String(agentsInfo[a].version).replace(/\s*\(.*\)/, '')}</i>}
-                  {m?.info && !agentsInfo[a]?.path && <i>未安装</i>}
+                  {m?.info && !agentsInfo[a]?.path && <i>{t('未安装', 'not installed')}</i>}
                 </button>
               ))}
             </div>
 
-            <label className="fl">工作目录</label>
+            <label className="fl">{t('工作目录', 'Working directory')}</label>
             <div className="dirrow">
               <input className="input mono" value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="/path/to/project" spellCheck={false} />
-              <button className="btn" onClick={() => openDir(cwd || '')} disabled={browsing}>{browsing ? <Spinner size={13} /> : <Icon name="folder" size={15} />}浏览</button>
+              <button className="btn" onClick={() => openDir(cwd || '')} disabled={browsing}>{browsing ? <Spinner size={13} /> : <Icon name="folder" size={15} />}{t('浏览', 'Browse')}</button>
             </div>
             {browse ? (
               <div className="browser">
                 <div className="browser-head">
-                  <button className="linkbtn" onClick={() => openDir(browse.parent)} disabled={browse.parent === browse.path}>↑ 上一级</button>
+                  <button className="linkbtn" onClick={() => openDir(browse.parent)} disabled={browse.parent === browse.path}>{t('↑ 上一级', '↑ Up')}</button>
                   <span className="mono" title={browse.path}>{shortPath(browse.path, 52)}</span>
-                  <button className="linkbtn" onClick={() => { setCwd(browse.path); setBrowse(null) }}>选这个目录</button>
+                  <button className="linkbtn" onClick={() => { setCwd(browse.path); setBrowse(null) }}>{t('选这个目录', 'Use this folder')}</button>
                 </div>
                 <div className="browser-list">
-                  {browse.entries.length === 0 && <div className="dim">没有子目录</div>}
+                  {browse.entries.length === 0 && <div className="dim">{t('没有子目录', 'No subfolders')}</div>}
                   {browse.entries.map((e) => (
                     <button key={e.name} onClick={() => openDir(browse.path.replace(/\/+$/, '') + '/' + e.name)}>
                       <Icon name="folder" size={14} />{e.name}
@@ -132,8 +133,8 @@ export function NewSession({ onClose, onStarted }: { onClose: () => void; onStar
               </div>
             )}
 
-            <label className="fl">第一条消息</label>
-            <textarea className="input area" autoFocus rows={4} value={prompt} placeholder="想让它做什么？" onChange={(e) => setPrompt(e.target.value)}
+            <label className="fl">{t('第一条消息', 'First message')}</label>
+            <textarea className="input area" autoFocus rows={4} value={prompt} placeholder={t('想让它做什么？', 'What should it do?')} onChange={(e) => setPrompt(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !imeKey(e)) start() }} />
 
             <div className="dialog-foot">
@@ -145,9 +146,9 @@ export function NewSession({ onClose, onStarted }: { onClose: () => void; onStar
               </label>
               <span className="grow" />
               {err && <span className="errtext">{err}</span>}
-              <button className="btn" onClick={onClose}>取消</button>
+              <button className="btn" onClick={onClose}>{t('取消', 'Cancel')}</button>
               <button className="btn primary" onClick={start} disabled={busy || !prompt.trim() || !cwd.trim() || !m?.online}>
-                {busy ? <Spinner size={13} /> : <Icon name="send" size={15} />}开始
+                {busy ? <Spinner size={13} /> : <Icon name="send" size={15} />}{t('开始', 'Start')}
               </button>
             </div>
           </div>
@@ -194,7 +195,7 @@ export function SearchPalette({ onClose, onOpen }: { onClose: () => void; onOpen
     }
     const my = ++seq.current
     setBusy(true)
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       try {
         const d = await api.search(query)
         if (my === seq.current) {
@@ -202,12 +203,12 @@ export function SearchPalette({ onClose, onOpen }: { onClose: () => void; onOpen
           setErr('')
         }
       } catch (e: any) {
-        if (my === seq.current) setErr(e.message || '搜索失败')
+        if (my === seq.current) setErr(e.message || t('搜索失败', 'Search failed'))
       } finally {
         if (my === seq.current) setBusy(false)
       }
     }, 260)
-    return () => clearTimeout(t)
+    return () => clearTimeout(timer)
   }, [q])
 
   const items: { id: string; ord?: number }[] = [...titleHits.map((s) => ({ id: s.id })), ...hits.map((h) => ({ id: h.session_id, ord: h.ord }))]
@@ -227,7 +228,7 @@ export function SearchPalette({ onClose, onOpen }: { onClose: () => void; onOpen
           <input
             autoFocus
             value={q}
-            placeholder="搜索所有机器上的对话内容…"
+            placeholder={t('搜索所有机器上的对话内容…', 'Search conversations on every machine…')}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
               if (imeKey(e)) return
@@ -241,9 +242,9 @@ export function SearchPalette({ onClose, onOpen }: { onClose: () => void; onOpen
           <button className="kbd" onClick={onClose}>Esc</button>
         </div>
         <div className="palette-list" ref={listRef}>
-          {q.trim().length < 2 && <div className="palette-empty">输入关键词，搜索标题和每一条对话内容。</div>}
+          {q.trim().length < 2 && <div className="palette-empty">{t('输入关键词，搜索标题和每一条对话内容。', 'Type to search titles and every message.')}</div>}
           {err && <div className="palette-empty error">{err}</div>}
-          {titleHits.length > 0 && <div className="palette-sec">标题匹配</div>}
+          {titleHits.length > 0 && <div className="palette-sec">{t('标题匹配', 'Titles')}</div>}
           {titleHits.map((s, i) => (
             <button key={'t' + s.id} className={'hit' + (sel === i ? ' sel' : '')} onMouseEnter={() => setSel(i)} onClick={() => go(i)}>
               <div className="hit-top">
@@ -253,13 +254,13 @@ export function SearchPalette({ onClose, onOpen }: { onClose: () => void; onOpen
               <div className="hit-meta"><AgentTag agent={s.agent} /><span>{machineLabel(machines, s.machine)}</span>{s.cwd && <span>{folderName(s.cwd)}</span>}</div>
             </button>
           ))}
-          {hits.length > 0 && <div className="palette-sec">对话内容</div>}
+          {hits.length > 0 && <div className="palette-sec">{t('对话内容', 'Messages')}</div>}
           {hits.map((h, j) => {
             const i = titleHits.length + j
             return (
               <button key={'h' + h.session_id + h.ord} className={'hit' + (sel === i ? ' sel' : '')} onMouseEnter={() => setSel(i)} onClick={() => go(i)}>
                 <div className="hit-top">
-                  <span className="hit-title">{metaMap[h.session_id]?.title || h.title || '（无标题）'}</span>
+                  <span className="hit-title">{metaMap[h.session_id]?.title || h.title || t('（无标题）', '(untitled)')}</span>
                   <span className="hit-time">{shortTime(ms(h.ended))}</span>
                 </div>
                 <div className="hit-snippet" dangerouslySetInnerHTML={{ __html: snippetHtml(h.snippet) }} />
@@ -267,7 +268,7 @@ export function SearchPalette({ onClose, onOpen }: { onClose: () => void; onOpen
               </button>
             )
           })}
-          {q.trim().length >= 2 && !busy && !err && items.length === 0 && <div className="palette-empty">没有找到相关内容。</div>}
+          {q.trim().length >= 2 && !busy && !err && items.length === 0 && <div className="palette-empty">{t('没有找到相关内容。', 'Nothing found.')}</div>}
         </div>
       </div>
     </div>
