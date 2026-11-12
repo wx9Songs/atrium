@@ -255,7 +255,9 @@ kbd { font-family: var(--sans); font-size: 11px; color: var(--text-3); letter-sp
 .tree-toggle .dot { margin-left: 1px; }
 .tree-toggle .tcount { margin-left: auto; font-size: 11.5px; font-weight: 400; color: var(--text-3); flex: none; min-width: 14px; text-align: right; }
 .tree-add { position: absolute; right: 4px; top: 2px; display: none; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; color: var(--text-2); }
+.tree-head.m .tree-add { top: 4px; }
 .tree-add:hover { color: var(--text); background: var(--active); }
+.tree-empty { padding: 5px 8px; font-size: 12px; color: var(--text-3); }
 .tree-head.can-add:hover .tree-add { display: inline-flex; }
 .tree-head.can-add:hover .tcount { visibility: hidden; }
 .tree-more { display: block; width: 100%; text-align: left; padding: 5px 8px; font-size: 12px; color: var(--text-3); border-radius: 8px; }

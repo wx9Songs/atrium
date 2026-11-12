@@ -1,6 +1,6 @@
 // The start page: a message box that begins a new session on any connected
 // machine, with the few recent sessions underneath.
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import { Composer, useRunPrefs } from './Composer'
 import { allSessions, liveIndex } from './derive'
@@ -31,8 +31,10 @@ export function Home({ onOpen, onSearch, sidebarHidden, onShowSidebar, focusSign
   const [browse, setBrowse] = useState<{ path: string; parent: string; entries: { name: string }[] } | null>(null)
   const [browsing, setBrowsing] = useState(false)
   const [browseErr, setBrowseErr] = useState('')
-  // "New session here" on a folder in the sidebar asks for a machine and folder (store.startAt).
+  // "New session here" on a machine or folder in the sidebar asks for a place (store.startAt).
   const [placeTick, setPlaceTick] = useState(0)
+  const [dirOpen, setDirOpen] = useState(false) // the folder menu
+  const dirInput = useRef<HTMLInputElement>(null)
   useEffect(() => {
     const on = () => setPlaceTick((x) => x + 1)
     window.addEventListener('atrium:start-at', on)
@@ -65,17 +67,25 @@ export function Home({ onOpen, onSearch, sidebarHidden, onShowSidebar, focusSign
   }, [sessions, machine])
 
   useEffect(() => {
-    if (machine && startAt.machine === machine && startAt.cwd) {
-      setCwd(startAt.cwd)
+    const asked = !!machine && startAt.machine === machine
+    const want = asked ? startAt.cwd : ''
+    if (asked) {
       startAt.machine = ''
       startAt.cwd = ''
-      setBrowse(null)
-      return
     }
     const saved = localStorage.getItem('atrium.new.cwd.' + machine)
-    setCwd((saved && recent.includes(saved) ? saved : recent[0]) || m?.info?.home || '')
+    setCwd(want || (saved && recent.includes(saved) ? saved : recent[0]) || m?.info?.home || '')
     setBrowse(null)
+    // Asked for a machine but no folder: open the folder menu, to pick one or type a path.
+    if (asked) setDirOpen(!want)
   }, [machine, loaded, placeTick]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // With a keyboard, the folder menu opens ready for typing a path.
+  useEffect(() => {
+    if (!dirOpen || window.matchMedia?.('(pointer: coarse)').matches) return
+    const timer = setTimeout(() => { dirInput.current?.focus(); dirInput.current?.select() }, 80)
+    return () => clearTimeout(timer)
+  }, [dirOpen])
 
   const openDir = async (path: string) => {
     setBrowsing(true)
@@ -155,13 +165,13 @@ export function Home({ onOpen, onSearch, sidebarHidden, onShowSidebar, focusSign
                   </>
                 )}
               </Dropdown>
-              <Dropdown wide className="pill solid" onOpenChange={(o) => { if (!o) setBrowse(null) }}
+              <Dropdown wide className="pill solid" open={dirOpen} onOpenChange={(o) => { setDirOpen(o); if (!o) setBrowse(null) }}
                 button={<><Icon name="folder" size={14} /><span className="mono ellip" title={cwd}>{cwd ? folderName(cwd) : t('选择目录', 'Choose a folder')}</span><Icon name="down" size={12} className="caret" /></>}>
                 {(close) => (
                   <>
                     <MenuLabel>{t('工作目录', 'Working directory')}</MenuLabel>
                     <div className="menu-form row">
-                      <input className="input sm mono" value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="/path/to/project" spellCheck={false}
+                      <input ref={dirInput} className="input sm mono" value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="/path/to/project" spellCheck={false}
                         onKeyDown={(e) => { if (e.key === 'Enter') close() }} />
                       <button className="btn sm" onClick={() => openDir(cwd || '')} disabled={browsing || !m?.online}>{browsing ? <Spinner size={12} /> : t('浏览', 'Browse')}</button>
                     </div>

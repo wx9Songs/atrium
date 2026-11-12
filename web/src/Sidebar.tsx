@@ -133,6 +133,11 @@ export function Sidebar({
         }
         f.items.push(s)
       }
+      // A machine that can run sessions is listed even before it has any, so one can be started there.
+      for (const m of machines) {
+        if (!m.runner || byMachine.has(m.name) || (pickedSet.size && !pickedSet.has(m.name))) continue
+        tree.push({ key: 'm:' + m.name, name: m.name, label: m.label, state: m.online ? 'on' : 'off', runner: true, folders: [], count: 0 })
+      }
       // Machines keep a steady order: online first, then offline, then history-only; within that, the hub's own order.
       const rank = { on: 0, off: 1, hist: 2 }
       const at = (name: string) => { const i = machines.findIndex((x) => x.name === name); return i < 0 ? 1e9 : i }
@@ -308,7 +313,7 @@ export function Sidebar({
           const moreFolders = node.folders.length - folders.length
           return (
             <div className="tree-m" key={node.key}>
-              <div className="tree-head m">
+              <div className={'tree-head m' + (node.runner ? ' can-add' : '')}>
                 <button className="tree-toggle" onClick={() => toggle(node.key, mOpen)} title={node.state === 'on' ? t('在线', 'Online') : node.state === 'off' ? t('不在线', 'Offline') : t('仅历史，没有接入操控', 'History only, no runner')}>
                   <Icon name={mOpen ? 'down' : 'right'} size={12} className="chev" />
                   <Icon name="machine" size={15} className="micon" />
@@ -317,6 +322,11 @@ export function Sidebar({
                   {!mOpen && liveMark(liveOf(node.folders.flatMap((f) => f.items)))}
                   <span className="tcount">{node.count}</span>
                 </button>
+                {node.runner && (
+                  <button className="tree-add" title={t('在这台机器上开新会话，目录可以选或填', 'New session on this machine: pick or type the folder')} onClick={() => { startIn(node.name, ''); onNew() }}>
+                    <Icon name="plus" size={15} />
+                  </button>
+                )}
               </div>
               {mOpen && (
                 <div className="tree-kids">
@@ -352,6 +362,7 @@ export function Sidebar({
                   </div>
                 )
                   })}
+                  {node.folders.length === 0 && <div className="tree-empty">{t('还没有会话', 'No sessions yet')}</div>}
                   {moreFolders > 0 && (
                     <button className="tree-more" onClick={() => setFull({ ...full, [node.key]: true })}>{t(`还有 ${moreFolders} 个目录`, `${moreFolders} more folders`)}</button>
                   )}

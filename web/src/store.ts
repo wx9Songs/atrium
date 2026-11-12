@@ -284,8 +284,9 @@ document.addEventListener('visibilitychange', () => {
 })
 
 /**
- * Where the start page should open next: set by "new session here" on a folder
- * in the sidebar, and used once by the start page.
+ * Where the start page should open next: set by "new session here" on a machine
+ * or a folder in the sidebar, and used once by the start page. With no folder
+ * (cwd ''), the start page opens its folder menu so one can be picked or typed.
  */
 export const startAt = { machine: '', cwd: '' }
 export function startIn(machine: string, cwd: string) {
