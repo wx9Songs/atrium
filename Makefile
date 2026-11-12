@@ -8,6 +8,7 @@ all: server runner
 
 web:
 	cd web && npm install --no-audit --no-fund && npx tsc --noEmit && npx vite build
+	@touch cmd/atrium/webdist/.keep   # the build empties the folder; the placeholder keeps a fresh clone compiling
 
 # The hub embeds the built web page, so it depends on `web`.
 server: web
