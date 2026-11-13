@@ -14,9 +14,11 @@ import { toolView, commandOf, parseInput } from './tools'
 import { cleanUserText, Transcript, TranscriptActions } from './Transcript'
 import { Dropdown, kbd, MenuItem, MenuSep, toast, usePersisted } from './ui'
 import {
-  canFork, clipText, copyText, displayTitle, fullTime, hasShell, imeKey, machineLabel, ms, resumeCommand, runCoveredByArchive, shortPath, statusText,
+  canFork, clipText, copyText, displayTitle, fullTime, hasFeature, hasShell, imeKey, machineLabel, ms, resumeCommand, runCoveredByArchive, shortPath, statusText,
 } from './util'
 import { lang, t } from './i18n'
+
+const msgKey = (m: Msg) => m.key || `a${m.ord}`
 
 const PAGE = 80
 
@@ -194,13 +196,76 @@ export function SessionView({
     return [...borrowed, ...base, ...live]
   }, [own, borrowed, unmerged, runs, merged, events, atLatest])
 
+  // ----- rewrites: an edited or retried message replaces what followed it, in this same session.
+  // The transcript keeps the replaced turns (the archive lists them in the order they were written),
+  // so they are folded away here, using what the machine said it left behind.
+  const rewinds = meta?.rewinds
+  const [cutting, setCutting] = useState<{ run: string; key: string } | null>(null)
+  const [oldOpen, setOldOpen] = useState<Set<string>>(() => new Set())
+  useEffect(() => {
+    setCutting(null)
+    setOldOpen(new Set())
+  }, [id])
+  const marked: Msg[] = useMemo(() => {
+    const cuts = (rewinds || []).filter((r) => r.to > r.from)
+    // A message being rewritten right now, until the machine has said where it cut.
+    const cutRun = cutting ? runs.find((r) => r.id === cutting.run) : undefined
+    const pending = cutting && cutRun && !isTerminal(cutRun) && !cuts.some((r) => r.run === cutting.run) ? cutting : null
+    if (!cuts.length && !pending) return full
+    const byId = new Map(runs.map((r) => [r.id, r]))
+    let after = false
+    return full.map((m) => {
+      if (pending && msgKey(m) === pending.key) after = true
+      const own = m.live && m.key ? byId.get(m.key.slice(0, m.key.lastIndexOf(':'))) : undefined
+      let gone = false
+      if (own) {
+        // Still shown live, not from the archive: replaced when a later run rewound to before it.
+        const last = own.last_ts || own.started_ts || own.created
+        gone = cuts.some((r) => (byId.get(r.run)?.created || 0) > own.created && last >= r.from - 1500)
+      } else if (!m.live) {
+        const at = ms(m.ts)
+        gone = !!at && cuts.some((r) => at >= r.from && at < r.to)
+      }
+      if (!gone && after && pending) gone = !(m.key || '').startsWith(pending.run + ':')
+      return gone ? { ...m, dropped: true } : m
+    })
+  }, [full, rewinds, cutting, runs])
+  const current = useMemo(() => marked.filter((m) => !m.dropped), [marked])
+
   // ----- branching: "from here" trims the view to that point until the first message is sent
   const [branch, setBranch] = useState<{ next?: Msg } | null>(null)
   const display = useMemo(() => {
-    if (!branch?.next) return full
-    const i = full.indexOf(branch.next)
-    return i < 0 ? full : full.slice(0, i)
-  }, [full, branch])
+    let list = marked
+    if (branch?.next) {
+      const i = list.indexOf(branch.next)
+      if (i >= 0) list = list.slice(0, i)
+    }
+    if (!list.some((m) => m.dropped)) return list
+    const out: Msg[] = []
+    for (let i = 0; i < list.length; ) {
+      if (!list[i].dropped) {
+        out.push(list[i++])
+        continue
+      }
+      let j = i
+      while (j < list.length && list[j].dropped) j++
+      const key = 'old:' + msgKey(list[i])
+      const open = oldOpen.has(key)
+      const n = list.slice(i, j).filter((m) => m.role === 'user' && !m.sys && m.text.trim()).length
+      out.push({ ord: -3, role: 'fold', text: '', key, fold: { n, open } })
+      if (open) out.push(...list.slice(i, j))
+      i = j
+    }
+    return out
+  }, [marked, branch, oldOpen])
+  const toggleOld = useCallback((key: string) => {
+    stick.current = false
+    setOldOpen((cur) => {
+      const next = new Set(cur)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
+  }, [])
 
   const active = runs.find((r) => !isTerminal(r))
   const lastRun = runs[runs.length - 1]
@@ -347,19 +412,37 @@ export function SessionView({
     }
   }
 
+  // Edit / try again: the session itself goes on from just before that message. Where that cannot be
+  // done (the first message of a session, an older runner) it becomes a new session, as it used to.
+  const rewindOK = cutOK && hasFeature(machine, 'rewind')
+  const rewrite = async (kind: 'edit' | 'retry', m: Msg, text: string) => {
+    const i = current.indexOf(m)
+    const own = m.live && m.key ? runs.find((r) => r.id === m.key!.slice(0, m.key!.lastIndexOf(':'))) : undefined
+    if (own && isTerminal(own) && !own.last_ts && i === current.map((x) => x.role === 'user' && !x.sys).lastIndexOf(true)) {
+      // The last message never reached the machine (its run failed before starting): just send it.
+      await send(text)
+      return
+    }
+    const answered = more || current.slice(0, Math.max(i, 0)).some((x) => x.role === 'assistant')
+    if (!rewindOK || !answered) {
+      const run = await fork(kind, text, m)
+      onOpen(`run:${run.id}`)
+      return
+    }
+    const cut = m.live ? { before_text: m.text } : { before_ts: m.ts, before_text: m.text }
+    const d = await api.createRun({ session_id: session.id, prompt: text, ...prefs.run, rewind: cut })
+    setCutting({ run: d.run.id, key: msgKey(m) })
+    stick.current = true
+    putRun(d.run)
+  }
+
   const actions: TranscriptActions | undefined = side ? undefined : {
     busy: !!active,
     canFork: forkOK,
     canCut: cutOK,
     why: forkWhy,
-    onEdit: async (m, text) => {
-      const run = await fork('edit', text, m)
-      onOpen(`run:${run.id}`)
-    },
-    onRetry: (m) => guarded(async () => {
-      const run = await fork('retry', cleanUserText(m.text), m)
-      onOpen(`run:${run.id}`)
-    }),
+    onEdit: (m, text) => rewrite('edit', m, text),
+    onRetry: (m) => guarded(() => rewrite('retry', m, cleanUserText(m.text))),
     onBranch: async (next) => {
       if (!forkOK) return toast(forkWhy)
       setBranch({ next })
@@ -392,7 +475,7 @@ export function SessionView({
     setPane('terminal')
     if (hasShell(machine)) sendToTerminal(session.id, cmd + '\n')
   }
-  const lastUser = [...full].reverse().find((m) => m.role === 'user' && !m.sys && m.text.trim())
+  const lastUser = [...current].reverse().find((m) => m.role === 'user' && !m.sys && m.text.trim())
 
   const appCommands: AppCommand[] = side ? [] : [
     { name: 'new', description: t('开始一个新会话', 'Start a new session'), run: () => onNew?.() },
@@ -463,6 +546,7 @@ export function SessionView({
             sessionId={session.synthetic ? undefined : id}
             focusOrd={focus}
             actions={actions}
+            onFold={toggleOld}
             inheritLabel={parentTitle ? t(`以上继承自「${parentTitle}」`, `Everything above comes from “${parentTitle}”`) : undefined}
           />
           {!atLatest && !loading && (

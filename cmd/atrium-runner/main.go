@@ -65,6 +65,10 @@ type Job struct {
 	Fork           bool   `json:"fork"`
 	ForkBeforeTS   string `json:"fork_before_ts"`
 	ForkBeforeText string `json:"fork_before_text"`
+	// Rewind continues session NativeID itself from just before that user
+	// message (ForkBefore*): what was said from there on stays in the transcript
+	// as a branch the session no longer follows, the way the CLI's own rewind does.
+	Rewind bool `json:"rewind"`
 }
 
 type outEvent struct {
@@ -325,7 +329,7 @@ func (r *Runner) hello() error {
 		"shell":  r.cfg.AllowShell,
 		"terms":  terms,
 		// What this runner understands, so the page only offers what will work.
-		"features": []string{"fork", "caps", "term", "files", "effort"},
+		"features": []string{"fork", "caps", "term", "files", "effort", "rewind"},
 	}
 	if err := r.request("POST", "/api/runner/hello", body, nil, 30*time.Second); err != nil {
 		return err

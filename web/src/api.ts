@@ -27,7 +27,9 @@ export type Session = {
 /** branch: fork from the end or from a reply · edit: a rewritten message · retry: the same message again · side: a side chat */
 export type ForkKind = 'branch' | 'edit' | 'retry' | 'side'
 
-export type Meta = { pinned?: boolean; title?: string; hidden?: boolean; fork_of?: string; fork_kind?: ForkKind; fork_ts?: number }
+/** A stretch of the transcript the session left behind when a message was rewritten: machine-clock ms, `run` carried the new message. */
+export type Rewind = { run: string; from: number; to: number }
+export type Meta = { pinned?: boolean; title?: string; hidden?: boolean; fork_of?: string; fork_kind?: ForkKind; fork_ts?: number; rewinds?: Rewind[] }
 
 export type SlashCmd = { name: string; description?: string; hint?: string }
 /** A model as the agent's own CLI lists it; `efforts` are the reasoning levels it accepts. */
@@ -123,6 +125,10 @@ export type Msg = {
   error?: boolean
   /** In a forked session: copied from the parent rather than said here. */
   inherited?: boolean
+  /** Said before a message was rewritten: no longer part of the session's history. */
+  dropped?: boolean
+  /** Not a message: the place where `n` replaced turns are folded away (`open`: they are shown below it). */
+  fold?: { n: number; open: boolean }
 }
 
 export type SearchHit = {
@@ -216,6 +222,8 @@ export const api = {
     model?: string
     effort?: string
     fork?: ForkReq
+    /** Continue `session_id` itself from just before one of its messages (edit, try again). */
+    rewind?: { before_ts?: string; before_text: string }
   }) => req<{ run: Run }>('/api/runs', { method: 'POST', body }),
   permission: (
     runId: string,

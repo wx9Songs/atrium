@@ -238,11 +238,11 @@ func claudeCwd(file string) string {
 // terminal uses another directory). In that case the transcript is copied into
 // the signed-in directory and resumed there.
 func (r *Runner) usableClaudeStore(file, store string) string {
-	if runtime.GOOS != "linux" || exists(filepath.Join(store, ".credentials.json")) {
+	if runtime.GOOS != "linux" || claudeSignedIn(store) {
 		return store
 	}
 	for _, other := range r.claudeStores() {
-		if other == store || !exists(filepath.Join(other, ".credentials.json")) {
+		if other == store || !claudeSignedIn(other) {
 			continue
 		}
 		dst := filepath.Join(other, "projects", filepath.Base(filepath.Dir(file)), filepath.Base(file))
@@ -263,6 +263,36 @@ func (r *Runner) usableClaudeStore(file, store string) string {
 	return store
 }
 
+// claudeSignedIn: does this config directory hold a sign-in the CLI can still
+// use? The file alone says little: after a sign-in lapses the CLI leaves it
+// behind with the tokens blanked or long expired, and every run from that
+// directory then fails with "OAuth session expired".
+func claudeSignedIn(store string) bool {
+	b, err := os.ReadFile(filepath.Join(store, ".credentials.json"))
+	if err != nil {
+		return false
+	}
+	var c struct {
+		OAuth *struct {
+			AccessToken           string `json:"accessToken"`
+			RefreshToken          string `json:"refreshToken"`
+			ExpiresAt             int64  `json:"expiresAt"`
+			RefreshTokenExpiresAt int64  `json:"refreshTokenExpiresAt"`
+		} `json:"claudeAiOauth"`
+	}
+	if json.Unmarshal(b, &c) != nil {
+		return true // not a layout we know: leave the decision to the CLI
+	}
+	if c.OAuth == nil {
+		return false
+	}
+	now := time.Now().UnixMilli()
+	if c.OAuth.RefreshToken != "" && (c.OAuth.RefreshTokenExpiresAt == 0 || c.OAuth.RefreshTokenExpiresAt > now) {
+		return true
+	}
+	return c.OAuth.AccessToken != "" && c.OAuth.ExpiresAt > now
+}
+
 func (p *proc) runClaude() error {
 	r, job := p.r, p.job
 	bin, err := exec.LookPath("claude")
@@ -272,7 +302,8 @@ func (p *proc) runClaude() error {
 	env := os.Environ()
 	cwd := job.Cwd
 	resume := !job.IsNew
-	cutAt := "" // with a fork: keep the copy up to and including this assistant message
+	cutAt := ""         // with a fork or a rewind: keep what was said up to and including this assistant message
+	var rewound *rewind // a rewind: the stretch of the transcript the session stops following
 	if resume {
 		if job.NativeID == "" {
 			return bi("缺少会话 ID", "Missing session ID")
@@ -284,15 +315,23 @@ func (p *proc) runClaude() error {
 		if c := claudeCwd(file); c != "" {
 			cwd = c
 		}
-		if job.Fork && (job.ForkBeforeTS != "" || job.ForkBeforeText != "") {
-			at, found := claudeCut(file, job.ForkBeforeTS, job.ForkBeforeText)
+		if (job.Fork || job.Rewind) && (job.ForkBeforeTS != "" || job.ForkBeforeText != "") {
+			at, from, found := claudeCut(file, job.ForkBeforeTS, job.ForkBeforeText)
 			if !found {
 				return bi("在这台机器的记录里找不到要改写的那条消息（它可能还没写入，或者会话被压缩过）", "That message was not found in this machine's transcript (it may not be written yet, or the session was compacted)")
+			}
+			if at == "" && job.Rewind {
+				return bi("会话的第一条消息没法在原会话里改写，请新建一个会话", "The first message of a session cannot be rewritten in place. Start a new session instead")
 			}
 			if at == "" {
 				resume = false // nothing before it: this is simply a new session in the same folder
 			}
 			cutAt = at
+			if job.Rewind {
+				rewound = &rewind{From: from.UnixMilli(), To: time.Now().UnixMilli()}
+			}
+		} else if job.Rewind {
+			return bi("缺少要改写的那条消息", "The message to rewrite is missing")
 		}
 		store = r.usableClaudeStore(file, store)
 		if store == filepath.Join(r.home, ".claude") {
@@ -309,9 +348,9 @@ func (p *proc) runClaude() error {
 		args = append(args, "--resume", job.NativeID)
 		if job.Fork {
 			args = append(args, "--fork-session")
-			if cutAt != "" {
-				args = append(args, "--resume-session-at", cutAt)
-			}
+		}
+		if cutAt != "" {
+			args = append(args, "--resume-session-at", cutAt)
 		}
 	}
 	switch job.Mode {
@@ -383,6 +422,10 @@ func (p *proc) runClaude() error {
 		case "system":
 			switch str(m, "subtype") {
 			case "init":
+				if rewound != nil {
+					r.emit(job.ID, "rewind", rewound) // from here on the session follows the new branch
+					rewound = nil
+				}
 				r.emit(job.ID, "status", map[string]any{"state": "running", "session_id": str(m, "session_id")})
 				r.emit(job.ID, "agent", map[string]any{
 					"type": "system", "subtype": "init", "session_id": str(m, "session_id"), "model": m["model"],
@@ -481,20 +524,35 @@ func (p *proc) answer(reqID, behavior, message string, always bool, input json.R
 	p.r.emit(p.job.ID, "permission_done", map[string]any{"request_id": reqID})
 }
 
-// claudeCut finds where a fork should end: just before the user message sent
-// at beforeTS (or, failing that, the last one with that text). It returns the
-// id of the last assistant message before it ("" when the message is the first
-// of the session). The page only knows messages by time and text, the CLI
-// wants a transcript id, so the transcript on this machine is the translator.
-func claudeCut(file, beforeTS, beforeText string) (assistantID string, found bool) {
+// rewind is the stretch of a transcript a session stopped following when one
+// of its messages was rewritten: everything from that message (From) up to the
+// moment of the rewrite (To), both in milliseconds on this machine's clock,
+// which is the clock the transcript's own timestamps come from.
+type rewind struct {
+	From int64 `json:"from"`
+	To   int64 `json:"to"`
+}
+
+// claudeCut finds where a fork or a rewind should end: just before the user
+// message sent at beforeTS (or, failing that, the last one with that text). It
+// returns the id of the assistant message that one answers to ("" when it is
+// the first of the session) and the time it was sent. The page only knows
+// messages by time and text, the CLI wants a transcript id, so the transcript
+// on this machine is the translator.
+//
+// A transcript is a tree, not a list: after a rewind the entry written just
+// above a message in the file can belong to a branch the session left behind.
+// So the answer is found by walking up from the message through its parents.
+func claudeCut(file, beforeTS, beforeText string) (assistantID string, sent time.Time, found bool) {
 	f, err := os.Open(file)
 	if err != nil {
-		return "", false
+		return "", time.Time{}, false
 	}
 	defer f.Close()
 	type entry struct {
 		Type        string `json:"type"`
 		UUID        string `json:"uuid"`
+		Parent      string `json:"parentUuid"`
 		Timestamp   string `json:"timestamp"`
 		IsSidechain bool   `json:"isSidechain"`
 		IsMeta      bool   `json:"isMeta"`
@@ -502,35 +560,49 @@ func claudeCut(file, beforeTS, beforeText string) (assistantID string, found boo
 			Content json.RawMessage `json:"content"`
 		} `json:"message"`
 	}
+	type node struct {
+		parent    string
+		assistant bool
+	}
+	nodes := map[string]node{}
 	want, wantOK := time.Time{}, false
 	if t, err := time.Parse(time.RFC3339Nano, beforeTS); err == nil {
 		want, wantOK = t, true
 	}
 	wantText := squash(beforeText)
 	lastAssistant := ""
-	byText, byTextFound := "", false
+	// The message, and the last assistant entry above it in the file: the answer
+	// when the chain of parents is broken (a compacted session).
+	type hit struct {
+		uuid, above string
+		at          time.Time
+	}
+	var exact, byText *hit
 	rd := bufio.NewReaderSize(f, 1<<16)
 	for {
 		line, err := rd.ReadBytes('\n')
 		if len(line) > 2 {
 			var e entry
-			if json.Unmarshal(line, &e) == nil && !e.IsSidechain && e.UUID != "" {
-				switch e.Type {
-				case "assistant":
-					lastAssistant = e.UUID
-				case "user":
-					text, isPrompt := promptText(e.Message.Content)
-					if !isPrompt || e.IsMeta {
-						break
-					}
-					if wantOK {
-						if t, err := time.Parse(time.RFC3339Nano, e.Timestamp); err == nil && t.Sub(want).Abs() <= time.Millisecond {
-							return lastAssistant, true
+			if json.Unmarshal(line, &e) == nil && e.UUID != "" {
+				nodes[e.UUID] = node{parent: e.Parent, assistant: e.Type == "assistant" && !e.IsSidechain}
+				if !e.IsSidechain && exact == nil {
+					switch e.Type {
+					case "assistant":
+						lastAssistant = e.UUID
+					case "user":
+						text, isPrompt := promptText(e.Message.Content)
+						if !isPrompt || e.IsMeta {
+							break
 						}
-					}
-					if got := squash(text); wantText != "" && (got == wantText ||
-						(len(wantText) >= 40 && strings.HasPrefix(got, wantText)) || (len(got) >= 40 && strings.HasPrefix(wantText, got))) {
-						byText, byTextFound = lastAssistant, true // keep going: the last match wins
+						t, terr := time.Parse(time.RFC3339Nano, e.Timestamp)
+						if wantOK && terr == nil && t.Sub(want).Abs() <= time.Millisecond {
+							exact = &hit{e.UUID, lastAssistant, t}
+							break
+						}
+						if got := squash(text); wantText != "" && (got == wantText ||
+							(len(wantText) >= 40 && strings.HasPrefix(got, wantText)) || (len(got) >= 40 && strings.HasPrefix(wantText, got))) {
+							byText = &hit{e.UUID, lastAssistant, t} // keep going: the last match wins
+						}
 					}
 				}
 			}
@@ -539,7 +611,29 @@ func claudeCut(file, beforeTS, beforeText string) (assistantID string, found boo
 			break
 		}
 	}
-	return byText, byTextFound
+	h := exact
+	if h == nil {
+		h = byText
+	}
+	if h == nil {
+		return "", time.Time{}, false
+	}
+	at := ""
+	for id, steps := nodes[h.uuid].parent, 0; id != "" && steps < len(nodes); steps++ {
+		n, ok := nodes[id]
+		if !ok {
+			break // the parent is not in this file
+		}
+		if n.assistant {
+			at = id
+			break
+		}
+		id = n.parent
+	}
+	if at == "" {
+		at = h.above // no parents recorded, or the chain stops at a compaction
+	}
+	return at, h.at, true
 }
 
 // promptText returns the text of a user entry, and false for entries that are
@@ -784,7 +878,7 @@ func (p *proc) runCodex() error {
 		if job.NativeID == "" {
 			return bi("缺少会话 ID", "Missing session ID")
 		}
-		if job.Fork && (job.ForkBeforeTS != "" || job.ForkBeforeText != "") {
+		if job.Rewind || job.Fork && (job.ForkBeforeTS != "" || job.ForkBeforeText != "") {
 			return bi("Codex 只能从会话末尾分叉，不能从中间某条消息改写", "Codex can only fork from the end of a session, not from a message in the middle")
 		}
 		file, home := r.findCodexSession(job.NativeID)

@@ -44,6 +44,9 @@ type Run struct {
 	ForkKind string `json:"fork_kind,omitempty"`
 	ForkOrd  *int   `json:"fork_ord,omitempty"`
 	Title    string `json:"title,omitempty"`
+	// Rewind: this run rewrites a message of its session (edit, try again). The
+	// session itself goes on from just before that message; see Meta.Rewinds.
+	Rewind bool `json:"rewind,omitempty"`
 	// queued → starting → running ⇄ permission → done | error | stopped | lost
 	Status  string `json:"status"`
 	Error   string `json:"error,omitempty"`
@@ -251,6 +254,23 @@ type Meta struct {
 	ForkOf   string `json:"fork_of,omitempty"`
 	ForkKind string `json:"fork_kind,omitempty"`
 	ForkTS   int64  `json:"fork_ts,omitempty"`
+	// Messages rewritten here (edit, try again): the session went on from just
+	// before each, and what it had said from there on is no longer its history.
+	Rewinds []Rewind `json:"rewinds,omitempty"`
+}
+
+// Rewind is one stretch of a transcript the session stopped following: from the
+// rewritten message (From) to the moment it was rewritten (To), in milliseconds
+// on the machine's clock, like the timestamps of the transcript itself. Run is
+// the run that carried the new message.
+type Rewind struct {
+	Run  string `json:"run"`
+	From int64  `json:"from"`
+	To   int64  `json:"to"`
+}
+
+func (m Meta) empty() bool {
+	return !m.Pinned && m.Title == "" && !m.Hidden && m.ForkOf == "" && m.ForkKind == "" && m.ForkTS == 0 && len(m.Rewinds) == 0
 }
 
 type MetaStore struct {
@@ -288,7 +308,7 @@ func (ms *MetaStore) Patch(id string, fn func(*Meta)) Meta {
 	defer ms.mu.Unlock()
 	v := ms.m[id]
 	fn(&v)
-	if v == (Meta{}) {
+	if v.empty() {
 		delete(ms.m, id)
 	} else {
 		ms.m[id] = v

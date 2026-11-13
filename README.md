@@ -47,7 +47,8 @@ Atrium is the fix I wanted: an *atrium* is the open court in the middle of a hou
 - Choose the model and reasoning effort from the list that machine's own CLI reports.
 
 **Branch like a chat app**
-- Edit an earlier message, try an answer again, or fork from any reply. Each becomes a new session; the original is left alone.
+- Edit an earlier message or try an answer again: the same session goes on from that point, and what it replaced is folded away, one click from being read again.
+- Fork from any reply to start a new session from there; the original is left alone.
 - Side chat: ask a question next to the conversation. It knows everything said so far, and nothing asked there is written back.
 - Type `/` for commands: Atrium's own, plus the slash commands and skills your Claude Code install reports.
 
@@ -138,8 +139,8 @@ Hover a message to see what you can do with it.
 
 | Do this | What happens |
 |---|---|
-| **Edit** one of your messages (pencil) | A new session is forked that ends just before that message, and your new text is sent there. |
-| **Try again** (under the last reply) | The same, with the message unchanged. |
+| **Edit** one of your messages (pencil) | The session goes back to just before that message and continues from your new text. It stays the same session; the turns it replaced are folded under a "rewritten here" mark. |
+| **Try again** (under the last reply) | The same, with the message unchanged: the reply is replaced. |
 | **Fork** (under any reply, or the button in the header) | The view is cut back to that point; your next message starts the new session. |
 | **Side chat** (`⌘.`) | A panel on the right with a fork of the session as it is now. Ask what you like; the main session never sees it. |
 | Type **`/`** | A menu of commands. Atrium's own run right away. The rest come from the Claude Code CLI on that machine and are sent to it as a message. |
@@ -147,7 +148,9 @@ Hover a message to see what you can do with it.
 | Send while a run is in flight | The message is queued and goes out when the run ends. |
 | **+** on a machine or folder in the sidebar | A new session there. On a machine, the folder menu opens so you can pick or type one. |
 
-Forks never touch the original transcript: Claude Code forks with `--resume <id> --fork-session` (plus `--resume-session-at` when the copy should stop early), Codex with `codex exec fork`. Codex can only fork from the end, so editing and trying again are offered for Claude Code sessions only. A fork does not copy or roll back files: both branches work in the same folder.
+Editing and trying again use what Claude Code's own rewind uses: `--resume <id> --resume-session-at <message>`. The session keeps its id, the replaced turns stay in the transcript as a branch it no longer follows, and `claude --resume` in a terminal picks up the new version. The first message of a session has nothing before it to go back to, so rewriting that one starts a new session instead.
+
+Forks never touch the original transcript: Claude Code forks with `--resume <id> --fork-session` (plus `--resume-session-at` when the copy should stop early), Codex with `codex exec fork`. Codex can only fork from the end, so editing and trying again are offered for Claude Code sessions only. Neither a rewrite nor a fork rolls back files: whatever the replaced turns changed in the folder stays changed.
 
 ### Terminal and files
 

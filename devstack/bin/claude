@@ -43,12 +43,14 @@ if (resume) {
       out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `No message found with message.uuid of: ${cutAt}`, session_id: sid })
       process.exit(1)
     }
-    lines = src.slice(0, i + 1)
+    // A fork copies the history up to there. Without --fork-session the session itself goes on from
+    // there: like the real CLI, what followed stays in the file as a branch nothing points to any more.
+    if (fork) lines = src.slice(0, i + 1)
   }
   lines = lines.map((l) => ({ ...l, sessionId: sid }))
 }
 const file = claudeFile(sid, lines[0]?.cwd || cwd)
-let parent = lines.length ? lines[lines.length - 1].uuid : null
+let parent = cutAt && !fork ? cutAt : lines.length ? lines[lines.length - 1].uuid : null
 const add = (type, message, extra = {}) => {
   const l = { type, uuid: uuid(), parentUuid: parent, sessionId: sid, timestamp: iso(Date.now()), cwd: lines[0]?.cwd || cwd, isSidechain: false, message, ...extra }
   parent = l.uuid

@@ -196,6 +196,11 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 			BeforeOrd  *int   `json:"before_ord"`
 			Title      string `json:"title"`
 		} `json:"fork"`
+		// Rewind: continue session_id itself from just before one of its messages.
+		Rewind *struct {
+			BeforeTS   string `json:"before_ts"`
+			BeforeText string `json:"before_text"`
+		} `json:"rewind"`
 	}
 	if err := readJSON(r, &body, 4<<20); err != nil {
 		writeErr(w, 400, "bad request")
@@ -217,7 +222,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		ID: "r" + randToken(9), Prompt: body.Prompt, Mode: body.Mode, Model: body.Model, Effort: body.Effort,
 		Status: "queued", Created: time.Now().UnixMilli(),
 	}
-	var forkCmd map[string]any
+	var forkCmd, rewindCmd map[string]any
 	if f := body.Fork; f != nil {
 		if !validForkKinds[f.Kind] {
 			writeErr(w, 400, "bad fork kind")
@@ -258,6 +263,18 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusConflict, L(r, "这个会话正在运行中，请等它结束或先停止", "This session is running. Wait for it to finish or stop it first"))
 			return
 		}
+		if rw := body.Rewind; rw != nil {
+			if rw.BeforeTS == "" && rw.BeforeText == "" {
+				writeErr(w, 400, "bad rewind")
+				return
+			}
+			if run.Agent != "claude" {
+				writeErr(w, 400, L(r, "这种会话不能改写中间的消息", "Messages in the middle of this kind of session cannot be rewritten"))
+				return
+			}
+			run.Rewind = true
+			rewindCmd = map[string]any{"rewind": true, "fork_before_ts": rw.BeforeTS, "fork_before_text": clip(rw.BeforeText, 400)}
+		}
 	} else {
 		if body.Agent != "claude" && body.Agent != "codex" {
 			writeErr(w, 400, L(r, "请选择 Claude 或 Codex", "Choose Claude or Codex"))
@@ -285,12 +302,20 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, L(r, "这台机器上的 runner 版本太旧，还不支持分叉。更新 runner 后再试。", "The runner on this machine is too old to fork sessions. Update it and try again."))
 		return
 	}
+	if rewindCmd != nil && !s.mach.supports(run.Machine, "rewind") {
+		// An older runner would ignore "rewind" and add the message to the end of the session.
+		writeErr(w, http.StatusConflict, L(r, "这台机器上的 runner 版本太旧，还不能在原会话里改写消息。更新 runner 后再试。", "The runner on this machine is too old to rewrite a message in place. Update it and try again."))
+		return
+	}
 	run = s.runs.Create(run)
 	job := map[string]any{
 		"id": run.ID, "agent": run.Agent, "native_id": run.NativeID, "cwd": run.Cwd,
 		"prompt": run.Prompt, "mode": run.Mode, "model": run.Model, "effort": run.Effort, "is_new": run.IsNew,
 	}
 	for k, v := range forkCmd {
+		job[k] = v
+	}
+	for k, v := range rewindCmd {
 		job[k] = v
 	}
 	cmd := map[string]any{"id": "c" + randToken(9), "type": "start", "run": job}
@@ -585,6 +610,9 @@ func (s *Server) applyRunEvent(machine string, ev inEvent) {
 	run, e, ok := s.runs.Append(ev.RunID, ev.T, ev.TS, ev.Data, mutate)
 	if ok {
 		s.noteFork(run)
+		if ev.T == "rewind" {
+			s.noteRewind(run, ev.Data)
+		}
 		s.bus.Publish("run", map[string]any{"run": run, "event": e})
 	}
 }
@@ -600,6 +628,32 @@ func (s *Server) noteFork(run Run) {
 		m.ForkOf, m.ForkKind, m.ForkTS = run.ForkOf, run.ForkKind, run.StartedTS
 		if m.Title == "" {
 			m.Title = run.Title
+		}
+	})
+	s.bus.Publish("meta", map[string]any{"id": run.SessionID, "meta": m})
+}
+
+// noteRewind records that a session went on from before one of its messages:
+// the runner says which stretch of the transcript it left behind. The archive
+// lists a transcript in the order it was written, so this note is what lets the
+// page fold that stretch away instead of showing both versions one after the other.
+func (s *Server) noteRewind(run Run, data json.RawMessage) {
+	var d struct {
+		From int64 `json:"from"`
+		To   int64 `json:"to"`
+	}
+	if !run.Rewind || run.SessionID == "" || json.Unmarshal(data, &d) != nil || d.From <= 0 || d.To <= d.From {
+		return
+	}
+	m := s.meta.Patch(run.SessionID, func(m *Meta) {
+		for _, x := range m.Rewinds {
+			if x.Run == run.ID {
+				return
+			}
+		}
+		m.Rewinds = append(m.Rewinds, Rewind{Run: run.ID, From: d.From, To: d.To})
+		if n := len(m.Rewinds); n > 200 {
+			m.Rewinds = append([]Rewind(nil), m.Rewinds[n-200:]...)
 		}
 	})
 	s.bus.Publish("meta", map[string]any{"id": run.SessionID, "meta": m})

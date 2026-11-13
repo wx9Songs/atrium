@@ -33,7 +33,9 @@ type Block =
   | { type: 'day'; label: string; key: string }
   | { type: 'user'; msg: Msg; key: string }
   | { type: 'text'; msg: Msg; key: string }
-  | { type: 'steps'; steps: Step[]; key: string; live: boolean }
+  | { type: 'steps'; steps: Step[]; key: string; live: boolean; old?: boolean }
+  /** Where turns replaced by a rewritten message are folded away. */
+  | { type: 'fold'; key: string; n: number; open: boolean }
   | { type: 'compact'; key: string }
   | { type: 'error'; text: string; key: string }
   | { type: 'inherit'; key: string }
@@ -46,13 +48,23 @@ function buildBlocks(msgs: Msg[]): Block[] {
   let steps: Step[] = []
   let stepsLive = false
   let lastDay = ''
+  let old = false // inside a stretch that a rewritten message replaced
   const flush = () => {
-    if (steps.length) out.push({ type: 'steps', steps, key: 'g' + steps[0].key, live: stepsLive })
+    if (steps.length) out.push({ type: 'steps', steps, key: 'g' + steps[0].key, live: stepsLive, old })
     steps = []
     stepsLive = false
   }
   let wasInherited = false
   for (const m of msgs) {
+    if (!!m.dropped !== old) {
+      flush()
+      old = !!m.dropped
+    }
+    if (m.fold) {
+      flush()
+      out.push({ type: 'fold', key: keyOf(m), n: m.fold.n, open: m.fold.open })
+      continue
+    }
     if (wasInherited && !m.inherited) {
       flush()
       out.push({ type: 'inherit', key: 'i' + keyOf(m) })
@@ -124,8 +136,8 @@ function withFooters(blocks: Block[]): Block[] {
     if (b.type === 'user') {
       close(b.msg)
       user = b.msg
-    } else if (b.type === 'inherit') {
-      // The footer of the last inherited turn belongs above the fork mark.
+    } else if (b.type === 'inherit' || b.type === 'fold') {
+      // The footer of the turn before it belongs above the mark.
       const nextUser = blocks.slice(i + 1).find((x) => x.type === 'user') as Extract<Block, { type: 'user' }> | undefined
       close(nextUser?.msg)
     } else if (b.type === 'text') {
@@ -222,7 +234,7 @@ const UserBubble = memo(function UserBubble({ msg, actions }: { msg: Msg; action
         {msg.ts && <span className="act-time">{clockTime(ms(msg.ts))}</span>}
         <CopyButton text={text} />
         {actions?.canCut && !(msg.inherited && msg.ord < 0) && (
-          <button className="act" title={tr('编辑这条消息，从这里开出一个新分支', 'Edit this message and branch off from here')} onClick={() => setEditing(true)}>
+          <button className="act" title={tr('编辑这条消息，会话从这里重新继续（之后的内容会被替换）', 'Edit this message: the session continues from here, and what followed is replaced')} onClick={() => setEditing(true)}>
             <Icon name="edit" size={14} />
           </button>
         )}
@@ -546,7 +558,11 @@ const StepGroup = memo(function StepGroup({ steps, live, sessionId }: { steps: S
 
 // ---------- transcript ----------
 
-export function Transcript({ msgs, sessionId, focusOrd, actions, inheritLabel }: { msgs: Msg[]; sessionId?: string; focusOrd?: number; actions?: TranscriptActions; inheritLabel?: string }) {
+export function Transcript({ msgs, sessionId, focusOrd, actions, inheritLabel, onFold }: {
+  msgs: Msg[]; sessionId?: string; focusOrd?: number; actions?: TranscriptActions; inheritLabel?: string
+  /** Show or hide the turns folded under a "rewritten here" mark. */
+  onFold?: (key: string) => void
+}) {
   const blocks = useMemo(() => buildBlocks(msgs), [msgs])
   const onClick = (e: React.MouseEvent) => {
     const btn = (e.target as HTMLElement).closest('[data-copy]') as HTMLElement | null
@@ -567,18 +583,31 @@ export function Transcript({ msgs, sessionId, focusOrd, actions, inheritLabel }:
             return <div key={b.key} className="daysep"><span>{b.label}</span></div>
           case 'user':
             return (
-              <div key={b.key} data-ord={b.msg.ord} className={(b.msg.inherited ? 'inherited ' : '') + (focusOrd !== undefined && b.msg.ord === focusOrd ? 'focus' : '')}>
-                <UserBubble msg={b.msg} actions={actions} />
+              <div key={b.key} data-ord={b.msg.ord} className={(b.msg.inherited ? 'inherited ' : '') + (b.msg.dropped ? 'replaced ' : '') + (focusOrd !== undefined && b.msg.ord === focusOrd ? 'focus' : '')}>
+                <UserBubble msg={b.msg} actions={b.msg.dropped ? undefined : actions} />
               </div>
             )
           case 'text':
             return (
-              <div key={b.key} data-ord={b.msg.ord} className={'row-assistant' + (focusOrd !== undefined && b.msg.ord === focusOrd ? ' focus' : '')}>
+              <div key={b.key} data-ord={b.msg.ord} className={'row-assistant' + (b.msg.dropped ? ' replaced' : '') + (focusOrd !== undefined && b.msg.ord === focusOrd ? ' focus' : '')}>
                 <AssistantText msg={b.msg} />
               </div>
             )
           case 'steps':
-            return <StepGroup key={b.key} steps={b.steps} live={b.live} sessionId={sessionId} />
+            return b.old
+              ? <div key={b.key} className="replaced"><StepGroup steps={b.steps} live={false} sessionId={sessionId} /></div>
+              : <StepGroup key={b.key} steps={b.steps} live={b.live} sessionId={sessionId} />
+          case 'fold':
+            return (
+              <div key={b.key} className={'foldmark' + (b.open ? ' open' : '')}>
+                <button className="linkbtn" onClick={() => onFold?.(b.key)}>
+                  <Icon name="edit" size={13} />
+                  {b.open
+                    ? tr('以下是改写前的内容，已不属于这个会话 · 收起', 'Below is what was replaced, no longer part of this session · Hide')
+                    : tr(`这里改写过 · 查看被替换的 ${b.n} 轮对话`, b.n === 1 ? 'Rewritten here · show the turn it replaced' : `Rewritten here · show the ${b.n} turns it replaced`)}
+                </button>
+              </div>
+            )
           case 'compact':
             return <div key={b.key} className="daysep compact"><span>{tr('更早的内容已被压缩成摘要', 'Earlier messages were compacted into a summary')}</span></div>
           case 'inherit':
@@ -591,10 +620,10 @@ export function Transcript({ msgs, sessionId, focusOrd, actions, inheritLabel }:
             if (b.isLast && actions?.busy) return null
             const why = actions?.why || ''
             // Borrowed from the parent while the archive catches up: readable, but not yet this session's to fork.
-            const borrowed = b.last.inherited && b.last.ord < 0
+            const borrowed = (b.last.inherited && b.last.ord < 0) || b.last.dropped
             if (borrowed) {
               return (
-                <div key={b.key} className="acts turn">
+                <div key={b.key} className={'acts turn' + (b.last.dropped ? ' replaced' : '')}>
                   <CopyButton text={b.text} label={tr('复制回复', 'Copy reply')} />
                   <span className="act-time">{[shortModel(b.last.model), b.last.ts ? clockTime(ms(b.last.ts)) : ''].filter(Boolean).join(' · ')}</span>
                 </div>
@@ -604,7 +633,7 @@ export function Transcript({ msgs, sessionId, focusOrd, actions, inheritLabel }:
               <div key={b.key} className={'acts turn' + (b.isLast ? ' last' : '')}>
                 <CopyButton text={b.text} label={tr('复制回复', 'Copy reply')} />
                 {actions && b.isLast && b.user && !(b.user.inherited && b.user.ord < 0) && (actions.canCut || why) && (
-                  <ActButton icon="retry" disabled={!actions.canCut} title={actions.canCut ? tr('重新生成：在新分支里把这条消息再发一次', 'Try again: send the same message again in a new branch') : why} onClick={() => actions.onRetry(b.user!)} />
+                  <ActButton icon="retry" disabled={!actions.canCut} title={actions.canCut ? tr('重新生成：把这条消息再发一次，替换这条回复', 'Try again: send the same message again and replace this reply') : why} onClick={() => actions.onRetry(b.user!)} />
                 )}
                 {actions && (actions.canFork || why) && (b.isLast || actions.canCut) && (
                   <ActButton icon="branch" disabled={!actions.canFork} title={actions.canFork ? tr('从这里分叉出一个新会话', 'Branch off into a new session from here') : why} onClick={() => actions.onBranch(b.next)} />
