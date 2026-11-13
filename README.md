@@ -59,19 +59,28 @@ It comes in English and Chinese, as a web page and as a small macOS app.
 
 ## Quick start
 
-You need Go 1.22+ and Node 18+ to build, and `claude` and/or `codex` installed and signed in on each machine.
+Download the archive for your system from **[Releases](https://github.com/wx9Songs/atrium/releases)** and unpack it. It holds the hub, the runner and the install scripts, so nothing needs compiling. Each machine needs `claude` and/or `codex` installed and signed in.
+
+| System | Archive |
+|---|---|
+| Mac, Apple silicon | `atrium-<version>-darwin-arm64.tar.gz` |
+| Mac, Intel | `atrium-<version>-darwin-amd64.tar.gz` |
+| Linux, x86-64 | `atrium-<version>-linux-amd64.tar.gz` |
+| Linux, ARM | `atrium-<version>-linux-arm64.tar.gz` |
+
+To build from source instead you need Go 1.22+ and Node 18+: `make` puts the same files in `bin/`.
 
 ### A. Just this computer, no server
 
 Everything runs on your own Mac or Linux desktop and listens on loopback only. No server, no SSH, no account.
 
 ```bash
-make
+tar -xzf atrium-*-darwin-arm64.tar.gz && cd atrium-*-darwin-arm64
 ./scripts/local-install.sh install
 ./scripts/local-install.sh link
 ```
 
-The first command builds, the second installs three small background jobs (the archive, the page, the runner), and the third opens the page signed in at `http://127.0.0.1:13005`. To remove it all: `./scripts/local-install.sh uninstall` (your transcripts are not touched).
+`install` sets up three small background jobs (the archive, the page, the runner), and `link` opens the page signed in at `http://127.0.0.1:13005`. To remove it all: `./scripts/local-install.sh uninstall` (your transcripts are not touched).
 
 ### B. Several machines
 
@@ -84,9 +93,10 @@ The machines need one computer they can all reach by SSH to act as the server. I
 
 It needs Linux with systemd and root access. Then:
 
+Unpack the archive for each computer's own system on it, then:
+
 ```bash
-make server-linux runners                              # build
-./scripts/server-install.sh --atrium ./atrium          # on the server, as root
+./scripts/server-install.sh --atrium ./bin/atrium      # on the server, as root
 ./scripts/machine-install.sh key                       # on each machine: prints a public key
 atrium-machine add laptop 'ssh-ed25519 AAAA…'          # on the server: prints a runner token
 ./scripts/machine-install.sh install --server my.server --name laptop --token …   # back on the machine
@@ -158,7 +168,15 @@ With that line, anyone who can sign in to your Atrium page can run commands and 
 
 ## Desktop app (macOS)
 
-`make app` builds `app/dist/Atrium.app`: a small native window around the page, with notifications when a run finishes or needs your confirmation, a dock badge, menu-bar shortcuts and one-click sign-in. See [app/README.md](app/README.md).
+Download `Atrium-<version>.dmg` from **[Releases](https://github.com/wx9Songs/atrium/releases)** and drag Atrium to Applications. It is a small native window around the page, with notifications when a run finishes or needs your confirmation, a dock badge, menu-bar shortcuts and one-click sign-in. It opens `http://127.0.0.1:13005`, which is where both setups above put the page.
+
+The app is not signed with an Apple Developer ID, so macOS refuses to open it the first time. Either allow it in System Settings → Privacy & Security → "Open Anyway", or clear the download flag:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Atrium.app
+```
+
+To build it yourself: `make app`. See [app/README.md](app/README.md).
 
 ## Things to know
 

@@ -9,7 +9,8 @@
 #   local-install.sh install [--name NAME] [--label "My Mac"] [--port 13005]
 #                            [--atrium ./bin/atrium] [--runner ./bin/atrium-runner]
 #                            [--agentsview PATH] [--no-service]
-#       Build first with `make`. agentsview is downloaded from its GitHub releases unless
+#       Run it from an unpacked release archive, or after `make` in a checkout: it looks for
+#       the binaries in ../bin. agentsview is downloaded from its GitHub releases unless
 #       it is already installed or you pass --agentsview. With --no-service nothing is
 #       registered with launchd / systemd; start it yourself with `local-install.sh run`.
 #   local-install.sh link        print a one-time sign-in link and open it
@@ -62,8 +63,8 @@ install)
   REPO="$(cd "$(dirname "$0")/.." && pwd)"
   [ -n "$ATRIUM" ] || ATRIUM="$REPO/bin/atrium"
   [ -n "$RUNNER" ] || RUNNER="$REPO/bin/atrium-runner"
-  [ -f "$ATRIUM" ] || { echo "hub binary not found at $ATRIUM (build it with 'make', or pass --atrium)" >&2; exit 1; }
-  [ -f "$RUNNER" ] || { echo "runner binary not found at $RUNNER (build it with 'make', or pass --runner)" >&2; exit 1; }
+  [ -f "$ATRIUM" ] || { echo "hub binary not found at $ATRIUM (use a release archive, build with 'make', or pass --atrium)" >&2; exit 1; }
+  [ -f "$RUNNER" ] || { echo "runner binary not found at $RUNNER (use a release archive, build with 'make', or pass --runner)" >&2; exit 1; }
   if [ -f "$BASE/push.sh" ]; then
     echo "This computer is already connected to an Atrium server (machine-install.sh)." >&2
     echo "Run 'scripts/machine-install.sh uninstall' first if you want the one-computer setup instead." >&2

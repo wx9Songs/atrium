@@ -11,3 +11,4 @@
 /devstack/data/
 /devstack/out/
 /devstack/out.log
+/dist/

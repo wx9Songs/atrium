@@ -2,7 +2,7 @@
 GOFLAGS := -trimpath -ldflags "-s -w"
 ARCH ?= amd64
 
-.PHONY: all web server server-linux runner runners app
+.PHONY: all web server server-linux runner runners app release
 
 all: server runner
 
@@ -30,3 +30,8 @@ runners:
 # macOS desktop app (needs Xcode command line tools).
 app:
 	./app/build.sh
+
+# Everything a release carries, in dist/release: an archive per platform and the app's .dmg.
+# `scripts/release.sh publish` also creates the GitHub release.
+release:
+	./scripts/release.sh

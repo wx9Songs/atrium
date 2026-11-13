@@ -15,7 +15,7 @@ Whichever you pick, the page opens on a setup guide the first time. It shows the
 Everything runs on your own Mac or Linux desktop and listens on loopback only: the archive (agentsview, reading this computer's own transcripts where they already are), the hub (the page) and the runner. There is no push, no tunnel and no SSH.
 
 ```bash
-make                                   # builds bin/atrium and bin/atrium-runner
+# in an unpacked release archive; in a checkout, run `make` first
 ./scripts/local-install.sh install     # installs and starts the three parts
 ./scripts/local-install.sh link        # opens the page, signed in
 ```
@@ -49,9 +49,9 @@ The server still needs Linux with systemd and root access, because the install s
 
 Three parts: the server, each machine, and signing in.
 
-## 1. Build
+## 1. Get the files
 
-On any machine with Go 1.22+ and Node 18+:
+Either download the release archive for each computer's system and unpack it there (the hub is `bin/atrium`, the runner `bin/atrium-runner`, and the scripts find them), or build on any machine with Go 1.22+ and Node 18+:
 
 ```bash
 make server-linux ARCH=amd64     # → bin/linux-amd64/atrium   (use ARCH=arm64 for an ARM server)

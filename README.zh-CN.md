@@ -59,19 +59,28 @@ Atrium 就是我想要的那个解法。"中庭"是房子中间那块露天的�
 
 ## 快速开始
 
-编译需要 Go 1.22+ 和 Node 18+；每台机器上要装好并登录 `claude` 和/或 `codex`。
+从 **[Releases](https://github.com/wx9Songs/atrium/releases)** 下载对应系统的压缩包并解压。里面有 hub、runner 和安装脚本，不需要编译。每台机器上要装好并登录 `claude` 和/或 `codex`。
+
+| 系统 | 压缩包 |
+|---|---|
+| Mac，Apple 芯片 | `atrium-<版本>-darwin-arm64.tar.gz` |
+| Mac，Intel | `atrium-<版本>-darwin-amd64.tar.gz` |
+| Linux，x86-64 | `atrium-<版本>-linux-amd64.tar.gz` |
+| Linux，ARM | `atrium-<版本>-linux-arm64.tar.gz` |
+
+想从源码编译，需要 Go 1.22+ 和 Node 18+：`make` 会把同样的文件生成到 `bin/` 里。
 
 ### A. 只用这一台电脑，不需要服务器
 
 所有东西都跑在你自己的 Mac 或 Linux 电脑上，只监听本机。不需要服务器，不需要 SSH，不需要账号。
 
 ```bash
-make
+tar -xzf atrium-*-darwin-arm64.tar.gz && cd atrium-*-darwin-arm64
 ./scripts/local-install.sh install
 ./scripts/local-install.sh link
 ```
 
-第一条编译；第二条装好三个后台小任务（存档、页面、runner）；第三条打开已登录的页面 `http://127.0.0.1:13005`。想全部移除：`./scripts/local-install.sh uninstall`（不会动你的对话记录）。
+`install` 装好三个后台小任务（存档、页面、runner），`link` 打开已登录的页面 `http://127.0.0.1:13005`。想全部移除：`./scripts/local-install.sh uninstall`（不会动你的对话记录）。
 
 ### B. 多台机器
 
@@ -84,9 +93,10 @@ make
 
 它需要是带 systemd 的 Linux，并且有 root 权限。然后：
 
+在每台电脑上解压它自己系统对应的压缩包，然后：
+
 ```bash
-make server-linux runners                              # 编译
-./scripts/server-install.sh --atrium ./atrium          # 在服务器上（root）
+./scripts/server-install.sh --atrium ./bin/atrium      # 在服务器上（root）
 ./scripts/machine-install.sh key                       # 在每台机器上：输出一把公钥
 atrium-machine add laptop 'ssh-ed25519 AAAA…'          # 在服务器上：输出这台机器的令牌
 ./scripts/machine-install.sh install --server my.server --name laptop --token …   # 回到那台机器
@@ -158,7 +168,15 @@ atrium-machine add laptop 'ssh-ed25519 AAAA…'          # 在服务器上：输
 
 ## 桌面应用（macOS）
 
-`make app` 会生成 `app/dist/Atrium.app`：一个包着页面的原生小窗口，运行结束或需要你确认时发通知，Dock 图标上显示待确认数量，菜单栏里有常用快捷键，并且可以一键登录。见 [app/README.md](app/README.md)。
+从 **[Releases](https://github.com/wx9Songs/atrium/releases)** 下载 `Atrium-<版本>.dmg`，把 Atrium 拖进"应用程序"。它是一个包着页面的原生小窗口，运行结束或需要你确认时发通知，Dock 图标上显示待确认数量，菜单栏里有常用快捷键，并且可以一键登录。它打开的是 `http://127.0.0.1:13005`，上面两种安装方式的页面都在这个地址。
+
+这个应用没有用 Apple 开发者证书签名，所以第一次打开会被 macOS 拦下。可以在"系统设置 → 隐私与安全性"里点"仍要打开"，或者清掉下载标记：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Atrium.app
+```
+
+想自己构建：`make app`。见 [app/README.md](app/README.md)。
 
 ## 需要知道的
 

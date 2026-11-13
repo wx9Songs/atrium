@@ -7,8 +7,11 @@ VERSION="${VERSION:-0.1.0}"
 #   APP_NAME="Atrium Dev" BUNDLE_ID=dev.atrium.app.dev ./app/build.sh
 APP_NAME="${APP_NAME:-Atrium}"
 BUNDLE_ID="${BUNDLE_ID:-dev.atrium.app}"
-swift build -c release 2>&1 | tail -3
-BIN="$(swift build -c release --show-bin-path)/Atrium"
+# UNIVERSAL=1 builds for both Apple silicon and Intel (needs full Xcode, not just the command line tools).
+ARCHS=""
+[ -n "${UNIVERSAL:-}" ] && ARCHS="--arch arm64 --arch x86_64"
+swift build -c release $ARCHS 2>&1 | tail -3
+BIN="$(swift build -c release $ARCHS --show-bin-path)/Atrium"
 APP="dist/$APP_NAME.app"
 mkdir -p dist
 [ -d "$APP" ] && mv "$APP" "dist/.old-$$.app"
