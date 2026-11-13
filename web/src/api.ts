@@ -185,7 +185,7 @@ async function req<T>(path: string, opts: { method?: string; body?: any } = {}):
 const enc = encodeURIComponent
 
 export const api = {
-  auth: () => req<{ authed: boolean; version: string; login_hint?: string }>('/api/auth'),
+  auth: () => req<{ authed: boolean; version: string; login_hint?: string; mode?: string }>('/api/auth'),
   login: (code: string) => req<{ authed: boolean }>('/api/login', { method: 'POST', body: { code } }),
   logout: () => req('/api/logout', { method: 'POST', body: {} }),
   sessions: (fresh = false) =>

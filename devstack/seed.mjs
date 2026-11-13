@@ -109,6 +109,25 @@ claude('重构侧栏的会话分组', proj('atrium'), 6 * MIN, [
   ['好。顺便把分组头做成吸顶的。', '已经是吸顶的了：`.sgroup-head` 有 `position: sticky; top: -4px`。刚才的改动没有动它，项目模式下同样生效。'],
 ])
 
+// The same piece of work in English, so screenshots and a first look work in either language.
+claude('Add a project view to the sidebar', proj('atrium'), 9 * MIN, [
+  ['The sidebar groups sessions by date. I want a switch to group them by project instead, with group heads that collapse. Look at how it works today first.',
+    { think: 'The sidebar groups by time bucket. Adding a project grouping means a second key function and a collapsed-state map.' },
+    'Let me read the sidebar code.',
+    { tool: 'Read', input: { file_path: proj('atrium') + '/web/src/Sidebar.tsx' }, result: "export function Sidebar() {\n  const groups = useMemo(() => bucketByTime(sessions), [sessions])\n  …\n}" },
+    { tool: 'Grep', input: { pattern: 'timeBucket', path: 'web/src' }, result: 'web/src/util.ts:71\nweb/src/Sidebar.tsx:117' },
+    bash('git log --oneline -5', 'Recent history', 'a1f3c9e sidebar: sticky group heads\n9d2e771 search palette\n77b01aa first import'),
+    'Today there is one grouping key: `timeBucket(ms(s.ended))`. Grouping by project is a small change:\n\n1. a `groupBy` setting (`time` | `project`), remembered in `localStorage`\n2. the project key is `machine|cwd`, so two machines with a folder of the same name stay apart\n3. in project mode the group head becomes a button that collapses the group\n\nShall I go ahead?'],
+  ['Go ahead. The collapsed state does not need to survive a reload.',
+    { tool: 'Edit', input: { file_path: proj('atrium') + '/web/src/Sidebar.tsx', old_string: 'const b = timeBucket(ms(s.ended), now)', new_string: "const key = groupBy === 'project' ? `${s.machine}|${s.cwd || ''}` : timeBucket(ms(s.ended), now).key" }, result: 'The file has been updated.' },
+    bash('cd web && npx tsc --noEmit', 'Type-check', "src/Sidebar.tsx(124,11): error TS2345: Argument of type 'string' is not assignable to parameter of type 'Bucket'.", true),
+    'The type check found one mistake: I mixed up `Bucket` and the string key. Fixing it.',
+    { tool: 'Edit', input: { file_path: proj('atrium') + '/web/src/Sidebar.tsx', old_string: 'map.get(key)', new_string: 'map.get(g.key)' }, result: 'The file has been updated.' },
+    bash('cd web && npx tsc --noEmit && npx vite build', 'Type-check and build', '✓ 214 modules transformed.\n✓ built in 1.84s'),
+    'Done. The type check and the build both pass.\n\n## What changed\n\n| File | Change |\n|---|---|\n| `web/src/Sidebar.tsx` | `groupBy`, grouping by project, collapsing |\n| `web/src/styles.css` | the group head as a button |\n\n```tsx\nconst [groupBy, setGroupBy] = usePersisted<\'time\' | \'project\'>(\'sh.groupby\', \'time\')\n```\n\nTwo things to know:\n\n- pinned sessions stay out of the groups, always on top\n- the collapsed state lives in memory only, so a reload opens everything again, as you asked'],
+  ['Good. Make the group heads sticky while you are there.', 'They already are: `.sgroup-head` has `position: sticky; top: -4px`. This change did not touch that, so it holds in project mode too.'],
+])
+
 claude('排查 runner 长轮询偶发 502', proj('atrium'), 3 * H, [
   ['runner 的 poll 偶尔返回 502，日志里是 `hub: HTTP 502`，大概每小时两三次。帮我看看。',
     { think: 'Long poll waits 25s; the tunnel or a proxy in between may have a shorter idle timeout.' },

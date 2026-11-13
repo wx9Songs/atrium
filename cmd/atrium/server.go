@@ -103,7 +103,9 @@ func (s *Server) background(ctx context.Context) {
 		case <-t.C:
 		}
 		n++
-		if s.mach.presenceChanged() {
+		// One broadcast covers both: a machine coming or going, and one being registered or removed.
+		synced := s.mach.syncConfig()
+		if s.mach.presenceChanged() || synced {
 			s.bus.Publish("machines", s.machineList(ctx))
 		}
 		if n%2 == 0 && s.bus.Count() > 0 {
@@ -218,7 +220,7 @@ func (s *Server) setCookie(w http.ResponseWriter, r *http.Request, value string,
 }
 
 func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"authed": s.authed(r), "version": version, "login_hint": s.cfg.LoginHint})
+	writeJSON(w, 200, map[string]any{"authed": s.authed(r), "version": version, "login_hint": s.cfg.LoginHint, "mode": s.cfg.Mode})
 }
 
 func (s *Server) loginAllowed() bool {

@@ -41,6 +41,7 @@ type Machines struct {
 	pending  map[string]chan rpcReply
 	reloaded time.Time
 	capsPath string
+	cfgStamp time.Time // the config file's modification time when it was last read
 }
 
 func newMachines(cfg *Config, capsPath string) *Machines {
@@ -53,6 +54,52 @@ func newMachines(cfg *Config, capsPath string) *Machines {
 		ms.m[name] = &Machine{Name: name, wake: make(chan struct{}, 1), Caps: saved[name]}
 	}
 	return ms
+}
+
+// introduced tells whether the machine's runner has said hello since this hub
+// started. Until it has, the hub does not know what the machine can do.
+func (ms *Machines) introduced(name string) bool {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	m := ms.m[name]
+	return m != nil && len(m.Info) > 0
+}
+
+// syncConfig picks up machines registered or removed while the hub runs
+// (`atrium add-machine` edits the config file), so a new machine is listed as
+// "waiting for its runner" right away. It reports whether the list changed.
+func (ms *Machines) syncConfig() bool {
+	st, err := os.Stat(ms.cfg.path)
+	if err != nil {
+		return false
+	}
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	if ms.cfgStamp.IsZero() {
+		ms.cfgStamp = st.ModTime()
+		return false
+	}
+	if st.ModTime().Equal(ms.cfgStamp) {
+		return false
+	}
+	fresh, err := loadConfig(ms.cfg.path)
+	if err != nil {
+		return false // half-written; the next tick reads it again
+	}
+	ms.cfgStamp = st.ModTime()
+	ms.cfg.Machines = fresh.Machines
+	ms.cfg.Labels = fresh.Labels
+	for name := range fresh.Machines {
+		if ms.m[name] == nil {
+			ms.m[name] = &Machine{Name: name, wake: make(chan struct{}, 1)}
+		}
+	}
+	for name := range ms.m {
+		if fresh.Machines[name] == nil {
+			delete(ms.m, name)
+		}
+	}
+	return true
 }
 
 // setCaps stores what an agent on a machine offers (kept across restarts, so

@@ -203,6 +203,7 @@ export function Home({ onOpen, onSearch, sidebarHidden, onShowSidebar, focusSign
                 )}
               </Dropdown>
               {blocked && runners.length > 0 && <span className="home-warn">{blocked}</span>}
+              {loaded && runners.length === 0 && <a className="linkbtn" href="#/setup">{t('打开接入向导', 'Open the setup guide')}</a>}
             </div>
           }
         />

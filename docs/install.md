@@ -1,5 +1,52 @@
 # Installing Atrium
 
+Pick the layout that fits:
+
+| You have | Use |
+|---|---|
+| one computer | [One computer, no server](#one-computer-no-server) |
+| several machines and a cloud server | [Several machines](#several-machines): the rest of this page |
+| several machines and no cloud server | the same, with [a computer of your own as the server](#without-a-cloud-server) |
+
+Whichever you pick, the page opens on a setup guide the first time. It shows the commands for each machine and checks live that every machine is connected. It stays in the ⋯ menu at the bottom of the sidebar.
+
+## One computer, no server
+
+Everything runs on your own Mac or Linux desktop and listens on loopback only: the archive (agentsview, reading this computer's own transcripts where they already are), the hub (the page) and the runner. There is no push, no tunnel and no SSH.
+
+```bash
+make                                   # builds bin/atrium and bin/atrium-runner
+./scripts/local-install.sh install     # installs and starts the three parts
+./scripts/local-install.sh link        # opens the page, signed in
+```
+
+What `install` does:
+
+- copies `atrium`, `atrium-runner` and `agentsview` to `~/.local/bin`. agentsview is downloaded from its GitHub releases (about 70 MB) and checked against the checksum list published with that release; a download that does not match is refused. To use a copy you fetched and verified yourself, pass `--agentsview PATH`.
+- writes its config under `~/.local/share/atrium/local` and the runner's under `~/.config/atrium/runner.json`.
+- registers three background jobs: launchd agents on macOS, `systemd --user` units on Linux. Where neither exists, or with `--no-service`, nothing is registered and `./scripts/local-install.sh run` runs the three parts in a terminal.
+
+The page is at `http://127.0.0.1:13005` (`--port` changes it; the archive takes that port plus 75). Sign-in is the same one-time link as on a server: `./scripts/local-install.sh link` prints one and opens it.
+
+| Command | What it does |
+|---|---|
+| `local-install.sh status` | what is running |
+| `local-install.sh install` again | updates the binaries after a `make`; config, secrets and sign-in stay |
+| `local-install.sh uninstall` | removes the jobs, binaries and config. Your transcripts are not touched |
+
+This layout is for the one computer. A computer already connected to a server with `machine-install.sh` cannot also run it. To bring in more machines, move to the layout below.
+
+## Without a cloud server
+
+"Server" here means one computer that every machine can reach by SSH and that stays on. Nothing in the scripts needs a public address or a cloud provider:
+
+- **A computer at home**: a mini PC, a NAS that runs Linux, a Raspberry Pi (`make server-linux ARCH=arm64`). Machines on the same network use its LAN address as `--server`.
+- **Machines on different networks**: put them and the server on a private network such as Tailscale or WireGuard and use the server's address on that network as `--server`. The tunnel and the push then travel inside it.
+
+The server still needs Linux with systemd and root access, because the install script creates locked-down system accounts and services. Follow [Several machines](#several-machines) exactly as written; only the address changes.
+
+## Several machines
+
 Three parts: the server, each machine, and signing in.
 
 ## 1. Build
@@ -90,6 +137,16 @@ Put that command in `login_hint` and the sign-in page will show it; the desktop 
 ## Access from anywhere (optional)
 
 Out of the box the page is reachable only from machines that have the tunnel. To use it from a phone or any network, put a TLS reverse proxy (Caddy, nginx) in front of `127.0.0.1:3005` on a domain you own, ideally behind a second login such as an auth proxy, and pass `--base https://your.domain` to `login-link`. Atrium sets the `Secure` cookie flag when it sees `X-Forwarded-Proto: https`.
+
+## Checking that it works
+
+Open the setup guide (it opens by itself the first time; later it is under ⋯ at the bottom of the sidebar). For each registered machine it shows, live:
+
+| Check | If it is not green |
+|---|---|
+| Runner connected | The runner job is not running on that machine, or its tunnel is down. Look at `~/.local/share/atrium/log/runner.log` and `tunnel.log` there. |
+| Found Claude Code / Codex | The runner starts from your login shell. Make sure `claude` or `codex` runs when you open a new terminal, then restart the runner. |
+| History arrived | Nothing has been pushed yet. New sessions appear within about a minute; `~/.local/share/atrium/log/push.log` shows the last push. |
 
 ## Updating
 

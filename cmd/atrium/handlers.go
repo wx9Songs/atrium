@@ -452,6 +452,14 @@ func (s *Server) handleRunnerPoll(w http.ResponseWriter, r *http.Request) {
 		wait = 25
 	}
 	name := machineOf(r)
+	// After a hub restart a runner may keep polling without noticing. The hub then knows
+	// nothing about the machine (its agents, what its runner supports), so ask it to say
+	// hello again: a runner treats any error here as "reconnect", and reconnecting starts with hello.
+	if !s.mach.introduced(name) {
+		s.mach.touch(name)
+		writeErr(w, http.StatusConflict, "say hello first")
+		return
+	}
 	cmds := s.mach.poll(r.Context(), name, time.Duration(wait)*time.Second)
 	s.mach.touch(name)
 	if cmds == nil {

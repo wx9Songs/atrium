@@ -4,14 +4,17 @@ import { SearchPalette } from './Dialogs'
 import { Home } from './Home'
 import { Logo, Spinner } from './icons'
 import { SessionView } from './SessionView'
+import { Setup, SETUP_SEEN } from './Setup'
 import { Sidebar, ThemeChoice } from './Sidebar'
 import { inApp, signIn, tellNative, useStore } from './store'
 import { isMac, Toaster, usePersisted } from './ui'
 import { copyText } from './util'
 import { t } from './i18n'
 
-// Routes live in the hash: #/ is the start page, #/s/<session id>[?m=<message ordinal>] a conversation.
-function parseHash(): { key?: string; ord?: number } {
+// Routes live in the hash: #/ is the start page, #/s/<session id>[?m=<message ordinal>] a conversation,
+// #/setup the setup guide.
+function parseHash(): { key?: string; ord?: number; setup?: boolean } {
+  if (location.hash.startsWith('#/setup')) return { setup: true }
   const m = location.hash.match(/^#\/s\/([^?]+)(?:\?m=(\d+))?/)
   if (!m) return {}
   return { key: decodeURIComponent(m[1]), ord: m[2] !== undefined ? Number(m[2]) : undefined }
@@ -91,6 +94,22 @@ function Shell({ theme, setTheme }: { theme: ThemeChoice; setTheme: (t: ThemeCho
     setHomeFocus((x) => x + 1)
   }, [])
 
+  // A new install opens on the setup guide, once: no machine can run anything yet, or nothing
+  // has ever been run or marked from this page.
+  const loaded = useStore((s) => s.loaded)
+  const machines = useStore((s) => s.machines)
+  const metaMap = useStore((s) => s.meta)
+  const offered = useRef(false)
+  useEffect(() => {
+    if (!loaded || offered.current) return
+    offered.current = true
+    let seen = false
+    try { seen = !!localStorage.getItem(SETUP_SEEN) } catch { /* private mode */ }
+    if (seen || location.hash.startsWith('#/s/')) return
+    const fresh = !machines.some((m) => m.runner && m.online) || (Object.keys(runs).length === 0 && Object.keys(metaMap).length === 0)
+    if (fresh) location.hash = '#/setup'
+  }, [loaded]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // A brand-new session is routed by its run id until it reports its real id.
   const id = route.key ? resolveKey(route.key, runs) : undefined
   useEffect(() => {
@@ -143,10 +162,12 @@ function Shell({ theme, setTheme }: { theme: ThemeChoice; setTheme: (t: ThemeCho
   }, [home, setSidebar])
 
   return (
-    <div className={'app' + (id ? ' has-session' : homeUp ? ' home-up' : '') + (sidebar ? '' : ' no-sidebar')}>
+    <div className={'app' + (id ? ' has-session' : homeUp || route.setup ? ' home-up' : '') + (sidebar ? '' : ' no-sidebar')}>
       {sidebar && <Sidebar currentId={id} onOpen={(sid) => open(sid)} onNew={home} onSearch={() => setShowSearch(true)} theme={theme} onTheme={setTheme} onHide={() => setSidebar(false)} />}
       {id ? (
         <SessionView key={id} id={id} focusOrd={route.ord} onBack={home} onOpen={open} onNew={home} onSearch={() => setShowSearch(true)} sidebarHidden={!sidebar} onShowSidebar={() => setSidebar(true)} />
+      ) : route.setup ? (
+        <Setup onStart={home} onBack={() => { location.hash = '#/'; setHomeUp(false) }} />
       ) : (
         <Home onOpen={open} onSearch={() => setShowSearch(true)} sidebarHidden={!sidebar} onShowSidebar={() => setSidebar(true)} focusSignal={homeFocus} onBack={() => setHomeUp(false)} />
       )}

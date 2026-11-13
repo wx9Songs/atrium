@@ -406,6 +406,7 @@ export function Sidebar({
                 <span>{t('把命令发到终端', 'Send a command to the terminal')}</span><kbd>!</kbd>
               </div>
               <MenuSep />
+              <MenuItem icon="machine" label={t('接入向导', 'Setup guide')} onClick={() => { close(); location.hash = '#/setup' }} />
               <MenuItem icon="logout" label={t('退出登录', 'Sign out')} onClick={() => { close(); signOut() }} />
             </>
           )}

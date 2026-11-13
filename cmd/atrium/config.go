@@ -29,6 +29,10 @@ type Config struct {
 	// LoginHint is the command shown on the sign-in page (how this install
 	// produces a sign-in link). Empty shows the generic instruction.
 	LoginHint string `json:"login_hint,omitempty"`
+	// Mode says how this install is laid out, for the page's setup guide:
+	// "local" is everything on one computer (scripts/local-install.sh), empty
+	// is a server that machines connect to.
+	Mode string `json:"mode,omitempty"`
 
 	path string
 }

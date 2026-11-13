@@ -8,6 +8,8 @@ export type State = {
   authed: boolean | null
   version: string
   loginHint: string
+  /** How this install is laid out: 'local' is everything on one computer, '' a server that machines connect to. */
+  mode: string
   loaded: boolean
   loadError: string
   connected: boolean
@@ -22,6 +24,7 @@ let state: State = {
   authed: null,
   version: '',
   loginHint: '',
+  mode: '',
   loaded: false,
   loadError: '',
   connected: false,
@@ -74,7 +77,7 @@ export async function boot() {
       }
     }
     const a = await api.auth()
-    set({ authed: a.authed, version: a.version, loginHint: a.login_hint || '' })
+    set({ authed: a.authed, version: a.version, loginHint: a.login_hint || '', mode: a.mode || '' })
     if (a.authed) {
       await refreshSessions()
       connect()

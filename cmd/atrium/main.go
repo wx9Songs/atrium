@@ -26,8 +26,11 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `atrium %s
 
   atrium serve       [--config FILE]            run the server
-  atrium init        [--config FILE]            create a config with fresh secrets
-  atrium add-machine [--config FILE] NAME       register a machine, print its runner token once
+  atrium init        [--config FILE] [--listen ADDR] [--archive-url URL] [--archive-token TOKEN]
+                     [--mode local] [--login-hint TEXT]
+                                                create a config with fresh secrets
+  atrium add-machine [--config FILE] [--label TEXT] NAME
+                                                register a machine, print its runner token once
   atrium login-link  [--config FILE] --base URL print a one-time sign-in link (valid 15 min)
   atrium version
 `, version)
@@ -38,7 +41,17 @@ func defaultConfigPath() string {
 	if p := os.Getenv("ATRIUM_CONFIG"); p != "" {
 		return p
 	}
-	return "/srv/atrium/config.json"
+	const server = "/srv/atrium/config.json"
+	// An install on one's own computer (scripts/local-install.sh) keeps its config under the home folder.
+	if _, err := os.Stat(server); err != nil {
+		if h, e := os.UserHomeDir(); e == nil {
+			local := filepath.Join(h, ".local", "share", "atrium", "local", "config.json")
+			if _, e := os.Stat(local); e == nil {
+				return local
+			}
+		}
+	}
+	return server
 }
 
 func main() {
@@ -49,7 +62,12 @@ func main() {
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	cfgPath := fs.String("config", defaultConfigPath(), "config file")
 	base := fs.String("base", "", "base URL the browser uses (login-link)")
-	listen := fs.String("listen", "", "override listen address (serve)")
+	listen := fs.String("listen", "", "listen address (serve: override; init: initial value)")
+	archiveURL := fs.String("archive-url", "", "where the session archive is (init)")
+	archiveToken := fs.String("archive-token", "", "the archive's bearer token (init)")
+	mode := fs.String("mode", "", `"local" for an install on one computer (init)`)
+	loginHint := fs.String("login-hint", "", "command shown on the sign-in page (init)")
+	label := fs.String("label", "", "display name of the machine (add-machine)")
 	switch cmd {
 	case "serve":
 		fs.Parse(args)
@@ -74,6 +92,15 @@ func main() {
 			Labels:       map[string]string{},
 			path:         *cfgPath,
 		}
+		if *listen != "" {
+			cfg.Listen = *listen
+		}
+		if *archiveURL != "" {
+			cfg.ArchiveURL = *archiveURL
+		}
+		cfg.ArchiveToken = *archiveToken
+		cfg.Mode = *mode
+		cfg.LoginHint = *loginHint
 		if err := cfg.save(); err != nil {
 			log.Fatal(err)
 		}
@@ -93,6 +120,9 @@ func main() {
 			cfg.Machines = map[string]*MachineConf{}
 		}
 		cfg.Machines[name] = &MachineConf{TokenHash: sha256hex(tok)}
+		if *label != "" {
+			cfg.Labels[name] = *label
+		}
 		if err := cfg.save(); err != nil {
 			log.Fatal(err)
 		}
