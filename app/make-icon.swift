@@ -1,4 +1,4 @@
-// Builds the app icon from the artwork in icon-source.webp: two pink ribbons
+// Builds the app icon from the artwork in icon-source.webp: a pink ribbon
 // folded into a ring of rooms around an open court, with a small sunlit
 // square in the middle.
 //
@@ -21,11 +21,11 @@ guard let source = CGImageSourceCreateWithURL(here.appendingPathComponent("icon-
     exit(1)
 }
 
-// The artwork is a 1478 x 1414 picture of the plate lying on a grey table.
-// This is the plate itself, taken a little inside its edge (its corners are
-// rounder than the macOS shape) so that none of the table or of the plate's
-// own shadow comes along (pixels, origin top left).
-let plateInArt = CGRect(x: 112, y: 84, width: 1234, height: 1234)
+// The artwork is a 1283 x 1226 picture of the plate lying on a table. This is
+// the plate itself, taken a little inside its edge (its corners are rounder
+// than the macOS shape) so that none of the table or of the plate's own
+// shadow comes along (pixels, origin top left).
+let plateInArt = CGRect(x: 96, y: 72, width: 1076, height: 1076)
 guard let plate = art.cropping(to: plateInArt) else { exit(1) }
 
 // macOS icon grid: the plate is 824 of the 1024 canvas, corner radius 186.
@@ -48,7 +48,7 @@ if flat == nil {
     ctx.saveGState()
     ctx.setShadow(offset: CGSize(width: 0, height: -12), blur: 28, color: rgb(0x5a2a3c, 0.30))
     ctx.addPath(shape)
-    ctx.setFillColor(rgb(0xfcf0ee))
+    ctx.setFillColor(rgb(0xfdf0e2))
     ctx.fillPath()
     ctx.restoreGState()
 }

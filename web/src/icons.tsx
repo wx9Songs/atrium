@@ -83,7 +83,7 @@ export function Spinner({ size = 14 }: { size?: number }) {
 }
 
 /**
- * The Atrium mark: ribbons folded into a ring of rooms around an open court,
+ * The Atrium mark: a ribbon folded into a ring of rooms around an open court,
  * with a small sunlit square in the middle. It is the same artwork as the app
  * icon; app/make-icon.swift writes logo.png from it (see the --flat option).
  */
