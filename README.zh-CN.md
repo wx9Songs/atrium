@@ -188,4 +188,4 @@ atrium-machine add laptop 'ssh-ed25519 AAAA…'          # 在服务器上：输
 
 ## 许可
 
-MIT
+[Apache License 2.0](LICENSE)。Copyright 2026 Atrium contributors。

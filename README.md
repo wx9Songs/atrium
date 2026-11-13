@@ -188,4 +188,4 @@ Early. It runs the author's daily setup: two Macs, two Linux containers and one 
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE). Copyright 2026 Atrium contributors.
