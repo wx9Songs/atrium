@@ -58,6 +58,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/auth", s.handleAuth)
 	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
+	mux.HandleFunc("POST /api/device-link", s.browser(s.handleLoginLink))
 
 	b := s.browser
 	mux.HandleFunc("GET /api/state", b(s.handleState))
@@ -266,6 +267,24 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setCookie(w, r, s.newCookieValue(), int(cookieTTL.Seconds()))
 	writeJSON(w, 200, map[string]any{"authed": true})
+}
+
+// handleLoginLink lets a signed-in page make a one-time sign-in code for another
+// device, the same kind `atrium login-link` prints: valid 15 minutes, usable once.
+// Whoever is signed in already has full access, so this hands out nothing new;
+// it saves a trip to a terminal on the server.
+func (s *Server) handleLoginLink(w http.ResponseWriter, r *http.Request) {
+	code := randToken(24)
+	dir := filepath.Join(s.cfg.dataDir(), "login-codes")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dir, sha256hex(code)), nil, 0o600); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"code": code, "expires_in": 900})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

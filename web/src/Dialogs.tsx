@@ -5,7 +5,8 @@ import { allSessions } from './derive'
 import { AgentTag, Icon, Spinner } from './icons'
 import { snippetHtml } from './md'
 import { useStore } from './store'
-import { displayTitle, folderName, imeKey, machineLabel, ms, shortTime } from './util'
+import { copyText, displayTitle, folderName, imeKey, machineLabel, ms, shortTime } from './util'
+import { toast } from './ui'
 import { t } from './i18n'
 
 // ---------- search everything ----------
@@ -119,6 +120,55 @@ export function SearchPalette({ onClose, onOpen }: { onClose: () => void; onOpen
             )
           })}
           {q.trim().length >= 2 && !busy && !err && items.length === 0 && <div className="palette-empty">{t('没有找到相关内容。', 'Nothing found.')}</div>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------- sign in on another device ----------
+
+/**
+ * A one-time link made by this, already signed-in, page. Pasted into the
+ * sign-in box on another phone or computer it signs that device in, with no
+ * terminal and no access to the server needed.
+ */
+export function DeviceLink({ onClose }: { onClose: () => void }) {
+  const [link, setLink] = useState('')
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const make = async () => {
+    setBusy(true)
+    setErr('')
+    try {
+      const d = await api.loginLink()
+      setLink(`${location.origin}/#login=${d.code}`)
+    } catch (e: any) {
+      setErr(e.message || t('生成失败', 'Could not make a link'))
+    } finally {
+      setBusy(false)
+    }
+  }
+  useEffect(() => { make() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', key)
+    return () => window.removeEventListener('keydown', key)
+  }, [onClose])
+  return (
+    <div className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="dialog" role="dialog" aria-label={t('在另一台设备上登录', 'Sign in on another device')}>
+        <h2>{t('在另一台设备上登录', 'Sign in on another device')}</h2>
+        <p>{t('在那台设备上打开 Atrium，把下面这条链接粘贴到登录页的输入框里。链接 15 分钟内有效，只能用一次。', 'Open Atrium on that device and paste this link into the box on its sign-in page. The link works once, within 15 minutes.')}</p>
+        <div className="setup-cmd">
+          <code>{busy ? t('正在生成…', 'Making a link…') : link}</code>
+          <button className="linkbtn" disabled={!link || busy} onClick={() => { copyText(link); toast(t('已复制', 'Copied')) }}>{t('复制', 'Copy')}</button>
+        </div>
+        {err && <div className="errtext">{err}</div>}
+        <p className="dim">{t('拿到这条链接的人能看到并操作你的全部会话，只发给你自己的设备。两台设备访问 Atrium 的地址不同也没关系：粘贴进输入框时只取其中的登录码。', 'Whoever has this link can see and run everything here, so send it only to your own devices. It does not matter if the two devices reach Atrium at different addresses: the box only takes the sign-in code out of the link.')}</p>
+        <div className="dialog-actions">
+          <button className="btn" onClick={make} disabled={busy}>{busy ? <Spinner size={13} /> : t('换一条', 'New link')}</button>
+          <button className="btn primary" onClick={onClose}>{t('完成', 'Done')}</button>
         </div>
       </div>
     </div>

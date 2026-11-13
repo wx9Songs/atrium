@@ -391,13 +391,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         <html><head><meta charset="utf-8"><style>
         body{font:15px -apple-system,'PingFang SC',sans-serif;display:grid;place-items:center;height:100vh;margin:0;
         background:\(dark ? "#1b1c1f" : "#f6f5f1");color:\(dark ? "#e9e7e2" : "#1c1d21")}
-        div{max-width:440px;text-align:center;line-height:1.7} p{color:#8a919b;font-size:13px}
+        div{max-width:460px;text-align:center;line-height:1.7} p{color:#8a919b;font-size:13px} a{color:#7c86ff} b{color:\(dark ? "#e9e7e2" : "#1c1d21")}
         button{font:inherit;padding:7px 18px;border-radius:9px;border:0;background:#4f58d8;color:#fff;margin-top:8px}
         code{font:12px ui-monospace,Menlo,monospace}
         </style></head><body><div>
         <h3>\(L("连不上 Atrium", "Cannot reach Atrium"))</h3>
         <p>\(L("地址：", "Address: "))<code>\(serverURL().absoluteString)</code><br>\(error.localizedDescription)</p>
-        <p>\(L("如果是通过隧道访问，请确认这台电脑上的隧道在运行；地址可以在「设置」（⌘,）里修改。", "If you use the SSH tunnel, check that it is running on this Mac. The address can be changed in Settings (⌘,)."))</p>
+        <p>\(L("这个应用只是一个窗口，显示的是 Atrium 的页面。<b>第一次用？</b>需要先把 Atrium 装在这台电脑上，或者把这台电脑接到你的 Atrium 服务器：", "This app is a window onto the Atrium page. <b>First time?</b> Atrium has to be installed on this Mac first, or this Mac connected to your Atrium server:")) <a href="\(L("https://github.com/wx9Songs/atrium/blob/main/README.zh-CN.md#快速开始", "https://github.com/wx9Songs/atrium#quick-start"))">\(L("安装说明", "how to install"))</a></p>
+        <p>\(L("已经装过：如果是通过隧道访问，请确认这台电脑上的隧道在运行；地址可以在「设置」（⌘,）里修改。", "Already installed: if you use the SSH tunnel, check that it is running on this Mac. The address can be changed in Settings (⌘,)."))</p>
         <button onclick="location.href='\(serverURL().absoluteString)'">\(L("重试", "Retry"))</button>
         </div></body></html>
         """

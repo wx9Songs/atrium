@@ -186,6 +186,8 @@ const enc = encodeURIComponent
 
 export const api = {
   auth: () => req<{ authed: boolean; version: string; login_hint?: string; mode?: string }>('/api/auth'),
+  /** A one-time sign-in code for another device (15 minutes, usable once). */
+  loginLink: () => req<{ code: string; expires_in: number }>('/api/device-link', { method: 'POST' }),
   login: (code: string) => req<{ authed: boolean }>('/api/login', { method: 'POST', body: { code } }),
   logout: () => req('/api/logout', { method: 'POST', body: {} }),
   sessions: (fresh = false) =>

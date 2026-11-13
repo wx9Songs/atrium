@@ -4,6 +4,7 @@
 // agent, and empty or one-off sessions are tucked away.
 import { useEffect, useMemo, useState } from 'react'
 import { Session } from './api'
+import { DeviceLink } from './Dialogs'
 import { allSessions, liveIndex, runSessionKey } from './derive'
 import { AgentTag, Icon, Logo, Spinner } from './icons'
 import { setMeta, signOut, startIn, useStore } from './store'
@@ -59,6 +60,7 @@ export function Sidebar({
   const [openMap, setOpenMap] = usePersisted<Record<string, boolean>>('atrium.tree.open', {})
   const [full, setFull] = useState<Record<string, boolean>>({}) // nodes whose "show more" was clicked
   const [renaming, setRenaming] = useState('')
+  const [deviceLink, setDeviceLink] = useState(false)
   const [, setTick] = useState(0)
 
   useEffect(() => {
@@ -407,11 +409,13 @@ export function Sidebar({
               </div>
               <MenuSep />
               <MenuItem icon="machine" label={t('接入向导', 'Setup guide')} onClick={() => { close(); location.hash = '#/setup' }} />
+              <MenuItem icon="external" label={t('在另一台设备上登录', 'Sign in on another device')} onClick={() => { close(); setDeviceLink(true) }} />
               <MenuItem icon="logout" label={t('退出登录', 'Sign out')} onClick={() => { close(); signOut() }} />
             </>
           )}
         </Dropdown>
       </div>
+      {deviceLink && <DeviceLink onClose={() => setDeviceLink(false)} />}
     </aside>
   )
 }

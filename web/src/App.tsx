@@ -203,17 +203,20 @@ function Login() {
       <div className="login-card">
         <Logo size={48} />
         <h1>{t('Atrium 中庭', 'Atrium')}</h1>
-        <p>{hint ? t('这个页面需要先登录。在终端里运行下面这条命令，它会打开已登录的页面：', 'Sign in first. Run this in a terminal; it opens the page signed in:') : t('这个页面需要先登录。在运行 Atrium 的服务器上执行下面这条命令，把它输出的链接在这个浏览器里打开：', 'Sign in first. Run this on the Atrium server and open the link it prints in this browser:')}</p>
-        <div className="login-cmd">
-          <code>{cmd}</code>
-          <button className="linkbtn" onClick={() => copyText(cmd)}>{t('复制', 'Copy')}</button>
-        </div>
-        <p className="dim">{t('或者把登录链接粘贴到这里：', 'Or paste the sign-in link here:')}</p>
+        <p>{t('这个页面需要先登录。', 'Sign in first.')}</p>
+        <p><b>{t('已经在别的设备上登录了？', 'Already signed in on another device?')}</b> {t('在那边点左下角 ⋯ →"在另一台设备上登录"，把得到的链接粘贴到下面。', 'There, open ⋯ at the bottom left → "Sign in on another device", and paste the link it gives you below.')}</p>
         <div className="dirrow">
           <input className="input" value={code} placeholder={t('粘贴登录链接', 'Sign-in link')} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit() }} />
           <button className="btn primary" onClick={submit} disabled={busy || !code.trim()}>{busy ? <Spinner size={13} /> : t('登录', 'Sign in')}</button>
         </div>
         {(err || loadError) && <div className="errtext">{err || loadError}</div>}
+        <p className="dim">{hint
+          ? t('第一次登录，或者没有已登录的设备：在装好 Atrium 的那台电脑的终端里运行下面这条命令（它是那台电脑上的命令，别的电脑上可能没有）；或者在服务器上运行 atrium login-link。', 'First sign-in, or no signed-in device at hand: run this in a terminal on the computer where Atrium was set up (the command lives there and may not exist elsewhere), or run atrium login-link on the server.')
+          : t('第一次登录，或者没有已登录的设备：在运行 Atrium 的服务器上执行下面这条命令，把它输出的链接粘贴到上面。', 'First sign-in, or no signed-in device at hand: run this on the Atrium server and paste the link it prints above.')}</p>
+        <div className="login-cmd">
+          <code>{cmd}</code>
+          <button className="linkbtn" onClick={() => copyText(cmd)}>{t('复制', 'Copy')}</button>
+        </div>
       </div>
     </div>
   )
