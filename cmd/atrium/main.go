@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-var version = "0.1.1"
+var version = "0.1.2"
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `atrium %s

@@ -2,7 +2,7 @@
 # Builds app/dist/Atrium.app. Needs the Xcode command line tools (swift, iconutil, codesign).
 set -e
 cd "$(dirname "$0")"
-VERSION="${VERSION:-0.1.1}"
+VERSION="${VERSION:-0.1.2}"
 # A second copy for trying things out next to the installed app:
 #   APP_NAME="Atrium Dev" BUNDLE_ID=dev.atrium.app.dev ./app/build.sh
 APP_NAME="${APP_NAME:-Atrium}"
