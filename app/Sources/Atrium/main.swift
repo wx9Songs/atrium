@@ -392,7 +392,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         body{font:15px -apple-system,'PingFang SC',sans-serif;display:grid;place-items:center;height:100vh;margin:0;
         background:\(dark ? "#1b1c1f" : "#f6f5f1");color:\(dark ? "#e9e7e2" : "#1c1d21")}
         div{max-width:460px;text-align:center;line-height:1.7} p{color:#8a919b;font-size:13px} a{color:#7c86ff} b{color:\(dark ? "#e9e7e2" : "#1c1d21")}
-        button{font:inherit;padding:7px 18px;border-radius:9px;border:0;background:#4f58d8;color:#fff;margin-top:8px}
+        button{font:inherit;padding:7px 18px;border-radius:9px;border:0;background:#e2558f;color:#fff;margin-top:8px}
         code{font:12px ui-monospace,Menlo,monospace}
         </style></head><body><div>
         <h3>\(L("连不上 Atrium", "Cannot reach Atrium"))</h3>
@@ -421,6 +421,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = navigationAction.request.url { NSWorkspace.shared.open(url) } // target=_blank
         return nil
+    }
+
+    // The page's "attach a file" button: without this a web view shows no file dialog at all.
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping ([URL]?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        if let window = webView.window {
+            panel.beginSheetModal(for: window) { completionHandler($0 == .OK ? panel.urls : nil) }
+        } else {
+            completionHandler(panel.runModal() == .OK ? panel.urls : nil)
+        }
     }
 }
 

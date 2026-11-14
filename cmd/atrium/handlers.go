@@ -187,6 +187,8 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		Mode      string `json:"mode"`
 		Model     string `json:"model"`
 		Effort    string `json:"effort"`
+		// Files: the attachments the prompt names, as paths on the machine (see upload.go).
+		Files []string `json:"files"`
 		// Fork: continue a copy of a session instead of the session itself.
 		Fork *struct {
 			SessionID  string `json:"session_id"`
@@ -307,10 +309,20 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, L(r, "这台机器上的 runner 版本太旧，还不能在原会话里改写消息。更新 runner 后再试。", "The runner on this machine is too old to rewrite a message in place. Update it and try again."))
 		return
 	}
+	if len(body.Files) > 20 {
+		body.Files = body.Files[:20]
+	}
+	// An older runner would start the agent without them: the paths stay in the prompt for it to read.
+	if !s.mach.supports(run.Machine, "upload") {
+		body.Files = nil
+	}
 	run = s.runs.Create(run)
 	job := map[string]any{
 		"id": run.ID, "agent": run.Agent, "native_id": run.NativeID, "cwd": run.Cwd,
 		"prompt": run.Prompt, "mode": run.Mode, "model": run.Model, "effort": run.Effort, "is_new": run.IsNew,
+	}
+	if len(body.Files) > 0 {
+		job["files"] = body.Files
 	}
 	for k, v := range forkCmd {
 		job[k] = v
@@ -513,6 +525,10 @@ func (s *Server) handleRunnerEvents(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case ev.T == "caps":
 			if s.mach.setCaps(name, ev.Data) {
+				s.bus.Publish("machines", s.machineList(r.Context()))
+			}
+		case ev.T == "limits":
+			if s.mach.setLimits(name, ev.Data) {
 				s.bus.Publish("machines", s.machineList(r.Context()))
 			}
 		case strings.HasPrefix(ev.T, "term_"):

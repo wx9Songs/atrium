@@ -4,6 +4,8 @@
 // interrupt, --resume / --fork-session / --resume-session-at), writes a
 // transcript in Claude Code's layout and publishes it to the mock archive.
 // It never talks to a model: replies are scripted from the prompt.
+import fs from 'node:fs'
+import path from 'node:path'
 import readline from 'node:readline'
 import { claudeFile, iso, publishClaude, readLines, sleep, uuid, writeLines } from '../lib.mjs'
 
@@ -125,6 +127,12 @@ async function turn(prompt) {
   const t0 = Date.now()
   out({ type: 'system', subtype: 'init', session_id: sid, model, cwd, permissionMode: mode, claude_code_version: '2.1.308', slash_commands: COMMANDS.map((c) => c.name) })
   add('user', { role: 'user', content: prompt })
+  // The plan allowance, as the real CLI reports it with every turn: it creeps up as the day goes on.
+  const now = Date.now(), H = 3600_000
+  out({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour', resetsAt: Math.ceil(now / (5 * H)) * 5 * H / 1000, unifiedWindows: {
+    five_hour: { utilization: Math.round((now % (5 * H)) / (5 * H) * 80) / 100, resetsAt: Math.ceil(now / (5 * H)) * 5 * H / 1000 },
+    seven_day: { utilization: Math.round((now % (168 * H)) / (168 * H) * 70) / 100, resetsAt: Math.ceil(now / (168 * H)) * 168 * H / 1000 },
+  } } })
   const done = (result, is_error = false) => {
     publish()
     out({ type: 'result', subtype: is_error ? 'error_during_execution' : 'success', is_error, result, duration_ms: Date.now() - t0, total_cost_usd: 0.0421, num_turns: 3, session_id: sid })
@@ -140,6 +148,19 @@ async function turn(prompt) {
     return done('ok')
   }
   if (/报错|fail/i.test(prompt)) return done('API Error: 529 overloaded (simulated)', true)
+  if (/\[Attached files/.test(prompt)) {
+    // Attachments: say which of the named files are there, and whether their folder was opened with --add-dir.
+    const allowed = argv.flatMap((x, i) => (x === '--add-dir' ? [argv[i + 1]] : []))
+    const files = prompt.split('\n').filter((l) => l.startsWith('- /')).map((l) => l.slice(2).trim())
+    await wait(500)
+    const text = '看到附件：\n\n' + files.map((f) => {
+      let size = -1
+      try { size = fs.statSync(f).size } catch { /* missing */ }
+      return `- \`${path.basename(f)}\`：${size < 0 ? '文件不存在' : size + ' 字节'}，${allowed.includes(path.dirname(f)) ? '目录已放行' : '目录没有放行'}`
+    }).join('\n')
+    say([{ type: 'text', text }])
+    return done(text)
+  }
   if (/回顾|recap|history/i.test(prompt)) {
     const text = past.length ? '到目前为止，这个会话里你发过这些消息：\n\n' + past.map((p, i) => `${i + 1}. ${p.slice(0, 80)}`).join('\n') : '这是这个会话的第一条消息。'
     say([{ type: 'text', text }])

@@ -111,6 +111,7 @@ func clip(s string, n int) string {
 }
 
 func slimSession(x arcSession) Session {
+	x.FirstMessage = withoutAttachments(x.FirstMessage)
 	title := strings.TrimSpace(x.DisplayName)
 	if title == "" {
 		title = clip(x.FirstMessage, 70)

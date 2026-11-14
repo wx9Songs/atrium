@@ -1,6 +1,7 @@
 // Data derived from the store: the full session list (archive + sessions
 // started here that the archive has not indexed yet) and per-session runs.
 import { Run, Session } from './api'
+import { plainMessage } from './attach'
 
 let lastS: Session[] | null = null
 let lastR: Record<string, Run> | null = null
@@ -39,11 +40,11 @@ export function allSessions(sessions: Session[], runs: Record<string, Run>): Ses
       nid: last.native_id,
       agent: first.agent,
       machine: first.machine,
-      title: first.title || clip(first.prompt, 60),
+      title: first.title || clip(plainMessage(first.prompt), 60),
       forkOf: first.fork_of,
       forkKind: first.fork_kind,
       forkOrd: first.fork_ord,
-      first: clip(first.prompt, 160),
+      first: clip(plainMessage(first.prompt), 160),
       cwd: first.cwd,
       started: new Date(first.created).toISOString(),
       ended: new Date(last.ended || last.created).toISOString(),

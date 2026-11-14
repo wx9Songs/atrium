@@ -7,6 +7,7 @@ import { highlight, renderMarkdown } from './md'
 import { commandOf, field, kindNames, parseInput, ToolKind, toolView } from './tools'
 import { clockTime, copyText, dayLabel, imeKey, ms } from './util'
 import { t as tr } from './i18n'
+import { baseName, isImageName, pictureURL, previewOf, splitAttachments, withAttachments } from './attach'
 
 /** What the reader can do with a message. Absent for read-only transcripts. */
 export type TranscriptActions = {
@@ -200,12 +201,34 @@ export function cleanUserText(s: string) {
     .trim()
 }
 
+/** An attachment of a sent message: the picture if this page or the hub has it, else its name. */
+function SentFile({ path }: { path: string }) {
+  const [gone, setGone] = useState(false)
+  const [zoom, setZoom] = useState(false)
+  const pic = gone ? undefined : previewOf(path) || pictureURL(path)
+  useEffect(() => {
+    if (!zoom) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setZoom(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [zoom])
+  if (!pic) return <span className="att" title={path}><Icon name={isImageName(path) ? 'image' : 'file'} size={15} /><span className="att-name">{baseName(path)}</span></span>
+  return (
+    <>
+      <button type="button" className="att pic" title={baseName(path)} onClick={() => setZoom(true)}>
+        <img src={pic} alt={baseName(path)} loading="lazy" onError={() => setGone(true)} />
+      </button>
+      {zoom && <div className="lightbox" onClick={() => setZoom(false)}><img src={pic} alt={baseName(path)} /></div>}
+    </>
+  )
+}
+
 const UserBubble = memo(function UserBubble({ msg, actions }: { msg: Msg; actions?: TranscriptActions }) {
-  const text = useMemo(() => cleanUserText(msg.text), [msg.text])
+  const { text, files } = useMemo(() => splitAttachments(cleanUserText(msg.text)), [msg.text])
   const long = text.length > 1400 || text.split('\n').length > 16
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(false)
-  if (!text) return null
+  if (!text && !files.length) return null
   if (editing && actions) {
     return (
       <div className="row-user editing">
@@ -213,7 +236,7 @@ const UserBubble = memo(function UserBubble({ msg, actions }: { msg: Msg; action
           initial={text}
           onCancel={() => setEditing(false)}
           onSend={async (v) => {
-            await actions.onEdit(msg, v)
+            await actions.onEdit(msg, withAttachments(v, files))
             setEditing(false)
           }}
         />
@@ -222,14 +245,19 @@ const UserBubble = memo(function UserBubble({ msg, actions }: { msg: Msg; action
   }
   return (
     <div className="row-user">
-      <div className={'bubble' + (long && !open ? ' clamp' : '')}>
+      {files.length > 0 && (
+        <div className="atts sent">
+          {files.map((f) => <SentFile key={f} path={f} />)}
+        </div>
+      )}
+      {text && <div className={'bubble' + (long && !open ? ' clamp' : '')}>
         {text}
         {long && (
           <button className="linkbtn more" onClick={() => setOpen(!open)}>
             {open ? tr('收起', 'Show less') : tr('展开全部', 'Show all')}
           </button>
         )}
-      </div>
+      </div>}
       <div className="acts">
         {msg.ts && <span className="act-time">{clockTime(ms(msg.ts))}</span>}
         <CopyButton text={text} />

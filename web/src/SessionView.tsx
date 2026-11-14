@@ -701,7 +701,7 @@ function RunStatus({ run }: { run: Run }) {
     <div className="runstatus">
       {run.perm ? <PermissionCard run={run} perm={run.perm} /> : (
         <div className="running-line">
-          <span className="pulse" />
+          <Spinner size={14} />
           <span className="shimmer">{statusText[run.status] || run.status}</span>
           <span className="dim">{elapsed}</span>
         </div>

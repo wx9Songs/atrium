@@ -8,6 +8,7 @@ import { Setup, SETUP_SEEN } from './Setup'
 import { Sidebar, ThemeChoice } from './Sidebar'
 import { inApp, signIn, tellNative, useStore } from './store'
 import { isMac, Toaster, usePersisted } from './ui'
+import { StatusBar } from './Usage'
 import { copyText } from './util'
 import { t } from './i18n'
 
@@ -171,6 +172,7 @@ function Shell({ theme, setTheme }: { theme: ThemeChoice; setTheme: (t: ThemeCho
       ) : (
         <Home onOpen={open} onSearch={() => setShowSearch(true)} sidebarHidden={!sidebar} onShowSidebar={() => setSidebar(true)} focusSignal={homeFocus} onBack={() => setHomeUp(false)} />
       )}
+      <StatusBar />
       {showSearch && <SearchPalette onClose={() => setShowSearch(false)} onOpen={open} />}
       <Toaster />
     </div>

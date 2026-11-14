@@ -361,6 +361,13 @@ func (p *proc) runClaude() error {
 	case "edits":
 		args = append(args, "--permission-mode", "acceptEdits")
 	case "full":
+		if os.Geteuid() == 0 {
+			if !r.cfg.RootSandbox {
+				return bi("这台机器上 runner 以 root 运行，Claude 不允许 root 使用“全部允许”。换一种权限模式；如果这台机器是可以随便折腾的容器，在它的 runner.json 里加上 \"root_sandbox\": true 并重启 runner。",
+					"The runner on this machine runs as root, and Claude refuses “Allow everything” as root. Pick another permission mode; or, if this machine is a throwaway container, add \"root_sandbox\": true to its runner.json and restart the runner.")
+			}
+			env = setEnv(env, "IS_SANDBOX", "1")
+		}
 		args = append(args, "--permission-mode", "bypassPermissions")
 	}
 	if job.Model != "" {
@@ -368,6 +375,10 @@ func (p *proc) runClaude() error {
 	}
 	if job.Effort != "" {
 		args = append(args, "--effort", job.Effort)
+	}
+	// Attachments live outside the project: let the tools read that folder without asking.
+	for _, d := range dirsOf(r.attachments(job.Files)) {
+		args = append(args, "--add-dir", d)
 	}
 
 	gotResult := false
@@ -441,6 +452,9 @@ func (p *proc) runClaude() error {
 			if s := slimClaude(m); s != nil {
 				r.emit(job.ID, "agent", s)
 			}
+		case "rate_limit_event":
+			info, _ := m["rate_limit_info"].(map[string]any)
+			r.reportLimits("claude", claudeLimits(info))
 		case "result":
 			gotResult = true
 			isErr, _ := m["is_error"].(bool)
@@ -904,6 +918,14 @@ func (p *proc) runCodex() error {
 	}
 	if job.Effort != "" {
 		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", job.Effort))
+	}
+	// Pictures go in as pictures; other attachments the agent opens by the path the prompt names.
+	if job.IsNew || codexResumeTakesImages(bin) {
+		for _, f := range r.attachments(job.Files) {
+			if isImage(f) {
+				args = append(args, "-i", f)
+			}
+		}
 	}
 	args = append(args, "--")
 	if !job.IsNew {

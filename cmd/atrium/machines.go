@@ -21,6 +21,7 @@ type Machine struct {
 	LastSeen  time.Time
 	Info      json.RawMessage
 	Caps      map[string]json.RawMessage // per agent: slash commands and models, as its CLI reports them
+	Limits    map[string]json.RawMessage // per agent: how much of the plan allowance is used (see usage.go)
 	queue     []json.RawMessage
 	wake      chan struct{}
 	wasOnline bool
@@ -53,6 +54,7 @@ func newMachines(cfg *Config, capsPath string) *Machines {
 	for name := range cfg.Machines {
 		ms.m[name] = &Machine{Name: name, wake: make(chan struct{}, 1), Caps: saved[name]}
 	}
+	ms.loadLimits()
 	return ms
 }
 
@@ -370,6 +372,7 @@ type MachineView struct {
 	LastSeen int64                      `json:"last_seen,omitempty"`
 	Info     json.RawMessage            `json:"info,omitempty"`
 	Caps     map[string]json.RawMessage `json:"caps,omitempty"`
+	Limits   map[string]json.RawMessage `json:"limits,omitempty"`
 }
 
 // machineList merges machines that have a runner with machines that only
@@ -386,7 +389,7 @@ func (s *Server) machineList(ctx context.Context) []MachineView {
 		return n
 	}
 	for name, m := range ms.m {
-		v := MachineView{Name: name, Label: label(name), Runner: true, Info: m.Info, Caps: m.Caps,
+		v := MachineView{Name: name, Label: label(name), Runner: true, Info: m.Info, Caps: m.Caps, Limits: m.Limits,
 			Online: time.Since(m.LastSeen) < onlineWindow}
 		if !m.LastSeen.IsZero() {
 			v.LastSeen = m.LastSeen.UnixMilli()

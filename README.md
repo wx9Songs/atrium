@@ -40,6 +40,8 @@ Atrium is the fix I wanted: an *atrium* is the open court in the middle of a hou
 **See everything**
 - Every session from every machine in one sidebar: machine, then working folder, then sessions newest first. Or a flat list by day.
 - Full history with tool calls folded into tidy steps, and full-text search across all of it.
+- Folders and sessions nobody has touched for seven days fold themselves away, so the list stays about current work.
+- Usage on a status bar along the bottom of the window: how much of each agent's plan limit is used and when it resets, and the tokens of the last seven days by day, machine and model. The limits are what the `claude` and `codex` CLIs on your machines last saw; Atrium does not ask the services itself.
 
 **Keep working**
 - Type at the bottom of any session. The turn runs on the machine that owns it, output streams back live, and permission requests show up as buttons.
@@ -144,7 +146,8 @@ Hover a message to see what you can do with it.
 | **Fork** (under any reply, or the button in the header) | The view is cut back to that point; your next message starts the new session. |
 | **Side chat** (`⌘.`) | A panel on the right with a fork of the session as it is now. Ask what you like; the main session never sees it. |
 | Type **`/`** | A menu of commands. Atrium's own run right away. The rest come from the Claude Code CLI on that machine and are sent to it as a message. |
-| Pick a **model** and **reasoning effort** | The list is the one the agent's own CLI reports on that machine, with the effort levels each model accepts. "Reload" in the menu reads it again. |
+| Pick a **model** and **reasoning effort** | The list is the one the agent's own CLI reports on that machine, with the effort levels each model accepts. Effort has its own button next to the model. "Reload" in the model menu reads the list again. |
+| **Paste** a picture, **drop** files on the page, or use the paperclip | They go out with the message: saved on the machine the session runs on, in a folder of the runner's own, and the agent is told where. Up to 10 files of 25 MB each. The hub keeps a copy of the pictures for a month, so the conversation shows them on every device. |
 | Send while a run is in flight | The message is queued and goes out when the run ends. |
 | **+** on a machine or folder in the sidebar | A new session there. On a machine, the folder menu opens so you can pick or type one. |
 
@@ -161,13 +164,17 @@ The panel on the right has two more tabs for the machine the session lives on:
 
 Both travel over the runner's existing connection, so no extra port is needed. Each keystroke makes a round trip through the hub: fine for commands and quick edits, slower than a local terminal.
 
-They are **off by default**. A runner can normally start `claude` and `codex` and nothing else. To allow these two tabs on a machine, say so in that machine's own `runner.json` and restart the runner:
+They are **off by default**. A runner can normally start `claude` and `codex`, and save the attachments of a message into its own cache folder, and nothing else. To allow these two tabs on a machine, say so in that machine's own `runner.json` and restart the runner:
 
 ```json
 { "hub": "…", "token": "…", "allow_shell": true }
 ```
 
 With that line, anyone who can sign in to your Atrium page can run commands and change files on that machine as the runner's user. Turn it on only where you are comfortable with that.
+
+### Running as root
+
+Claude Code refuses "Allow everything" when it runs as root. If a runner is root on a throwaway machine such as a container, add `"root_sandbox": true` to that machine's `runner.json` and restart the runner: it then tells Claude the machine is a sandbox (`IS_SANDBOX=1`). Leave it off anywhere you would mind an agent running any command as root without asking.
 
 ## Desktop app (macOS)
 

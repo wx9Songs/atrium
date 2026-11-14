@@ -8,17 +8,20 @@ import { DeviceLink } from './Dialogs'
 import { allSessions, liveIndex, runSessionKey } from './derive'
 import { AgentTag, Icon, Logo, Spinner } from './icons'
 import { setMeta, signOut, startIn, useStore } from './store'
+import { UsageLine } from './Usage'
 import { Dropdown, kbd, MenuItem, MenuLabel, MenuSep, Segmented, toast, usePersisted } from './ui'
-import { copyText, displayTitle, folderName, imeKey, machineLabel, ms, resumeCommand, shortTime, timeBucket } from './util'
+import { agentName, copyText, displayTitle, folderName, imeKey, machineLabel, ms, resumeCommand, shortTime, timeBucket } from './util'
 import { t, lang, setLang } from './i18n'
 
-type Group = { key: string; label: string; items: Session[] }
+type Group = { key: string; label: string; items: Session[]; old: boolean }
 type Folder = { key: string; cwd: string; label: string; items: Session[] }
-type MachineNode = { key: string; name: string; label: string; state: 'on' | 'off' | 'hist'; runner: boolean; folders: Folder[]; count: number }
+type MachineNode = { key: string; name: string; label: string; state: 'on' | 'off' | 'hist'; runner: boolean; server: boolean; folders: Folder[]; count: number }
 
 const FOLDER_ROWS = 5 // sessions listed under a folder before "show more"
 const MACHINE_FOLDERS = 8 // folders listed under a machine before "show more"
-const FRESH = 3 * 86400_000 // a folder used this recently starts out open
+const STALE = 7 * 86400_000 // what has not been used for this long folds itself away
+const RECENT_ROWS = 5 // sessions listed under "Recent" above the machines
+const STALE_ROWS = 3 // sessions listed in a folder that was opened although nothing in it is recent
 
 export type ThemeChoice = 'light' | 'dark' | 'system'
 
@@ -56,8 +59,9 @@ export function Sidebar({
   const [showMinor, setShowMinor] = usePersisted('sh.minor', false)
   const [showHidden, setShowHidden] = usePersisted('sh.hidden', false)
   const [showSide, setShowSide] = usePersisted('atrium.f.side', false)
-  // Tree nodes the user opened or closed by hand; the rest follow a default (see isOpen).
-  const [openMap, setOpenMap] = usePersisted<Record<string, boolean>>('atrium.tree.open', {})
+  // Tree nodes the user opened or closed by hand, and when: the time opened, or minus the time
+  // closed (earlier versions stored true / false). The rest follow a default (see isOpen).
+  const [openMap, setOpenMap] = usePersisted<Record<string, number | boolean>>('atrium.tree.open', {})
   const [full, setFull] = useState<Record<string, boolean>>({}) // nodes whose "show more" was clicked
   const [renaming, setRenaming] = useState('')
   const [deviceLink, setDeviceLink] = useState(false)
@@ -77,7 +81,7 @@ export function Sidebar({
   const live = useMemo(() => liveIndex(runs), [runs])
   const touchedHere = useMemo(() => new Set(Object.values(runs).map(runSessionKey)), [runs])
 
-  const { groups, tree, pinned, minorCount, hiddenCount, sideCount, total } = useMemo(() => {
+  const { groups, tree, pinned, recent, minorCount, hiddenCount, sideCount, total } = useMemo(() => {
     let minorCount = 0
     let hiddenCount = 0
     let sideCount = 0
@@ -121,7 +125,7 @@ export function Sidebar({
         let node = byMachine.get(s.machine)
         if (!node) {
           const m = machines.find((x) => x.name === s.machine)
-          node = { key: 'm:' + s.machine, name: s.machine, label: machineLabel(machines, s.machine), state: m?.runner ? (m.online ? 'on' : 'off') : 'hist', runner: !!m?.runner, folders: [], count: 0 }
+          node = { key: 'm:' + s.machine, name: s.machine, label: machineLabel(machines, s.machine), state: m?.runner ? (m.online ? 'on' : 'off') : 'hist', runner: !!m?.runner, server: m?.info?.os === 'linux', folders: [], count: 0 }
           byMachine.set(s.machine, node)
           tree.push(node)
         }
@@ -138,7 +142,7 @@ export function Sidebar({
       // A machine that can run sessions is listed even before it has any, so one can be started there.
       for (const m of machines) {
         if (!m.runner || byMachine.has(m.name) || (pickedSet.size && !pickedSet.has(m.name))) continue
-        tree.push({ key: 'm:' + m.name, name: m.name, label: m.label, state: m.online ? 'on' : 'off', runner: true, folders: [], count: 0 })
+        tree.push({ key: 'm:' + m.name, name: m.name, label: m.label, state: m.online ? 'on' : 'off', runner: true, server: m.info?.os === 'linux', folders: [], count: 0 })
       }
       // Machines keep a steady order: online first, then offline, then history-only; within that, the hub's own order.
       const rank = { on: 0, off: 1, hist: 2 }
@@ -148,22 +152,31 @@ export function Sidebar({
       const map = new Map<string, Group>()
       for (const s of rest) {
         const b = timeBucket(ms(s.ended), now)
-        const g = map.get(b.key) || { key: b.key, label: b.label, items: [] }
+        const g = map.get(b.key) || { key: b.key, label: b.label, items: [], old: b.key >= 'd' }
         map.set(b.key, g)
         g.items.push(s)
       }
       groups.push(...map.values())
       groups.sort((a, b) => (a.key < b.key ? -1 : 1))
     }
-    return { groups, tree, pinned, minorCount, hiddenCount, sideCount, total: rows.length }
+    // In the tree, the sessions used last are also listed on their own above the machines,
+    // so the one being worked on is never a few folders away.
+    const recent = groupBy === 'project' ? rest.filter((s) => now - ms(s.ended) < STALE || live.has(s.id)).slice(0, RECENT_ROWS) : []
+    return { groups, tree, pinned, recent, minorCount, hiddenCount, sideCount, total: rows.length }
   }, [all, metaMap, machines, pickedSet, agent, groupBy, showMinor, showHidden, showSide, live, touchedHere, currentId])
 
-  // Open or closed: the user's own choice if there is one; otherwise machines are open, and a
-  // folder is open when it was used lately, has something running, or holds the open session.
-  const folderDefault = (f: Folder) =>
-    Date.now() - ms(f.items[0]?.ended) < FRESH || f.items.some((s) => s.id === currentId || live.has(s.id))
-  const isOpen = (key: string, def: boolean) => openMap[key] ?? def
-  const toggle = (key: string, now: boolean) => setOpenMap({ ...openMap, [key]: !now })
+  // Open or closed. Machines are open. A folder is open when it was used in the last seven
+  // days, has something running, or holds the open session; after seven idle days it folds
+  // itself. Closing by hand sticks; opening by hand holds for seven days, then the rule is back.
+  const fresh = (s: Session) => Date.now() - ms(s.ended) < STALE
+  const folderDefault = (f: Folder) => (!!f.items[0] && fresh(f.items[0])) || f.items.some((s) => s.id === currentId || live.has(s.id))
+  const isOpen = (key: string, def: boolean) => {
+    const v = openMap[key]
+    if (v === false || (typeof v === 'number' && v < 0)) return false
+    if (typeof v === 'number' && Date.now() - v < STALE) return true
+    return def
+  }
+  const toggle = (key: string, now: boolean) => setOpenMap({ ...openMap, [key]: now ? -Date.now() : Date.now() })
   // The worst live state among some sessions, shown on a closed node so nothing waits unseen.
   const liveOf = (items: Session[]) => {
     let st: 'running' | 'permission' | undefined
@@ -184,7 +197,7 @@ export function Sidebar({
     for (const node of tree) {
       const f = node.folders.find((x) => x.items.some((s) => s.id === currentId))
       if (!f) continue
-      if (openMap[node.key] === false || openMap[f.key] === false) setOpenMap({ ...openMap, [node.key]: true, [f.key]: true })
+      if (!isOpen(node.key, true) || !isOpen(f.key, true)) setOpenMap({ ...openMap, [node.key]: Date.now(), [f.key]: Date.now() })
       return
     }
   }, [currentId, groupBy, loaded]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -233,10 +246,11 @@ export function Sidebar({
       <div key={s.id} className={'srow' + (s.id === currentId ? ' active' : '') + (m?.hidden ? ' dimmed' : '') + (inTree ? ' in-tree' : '')}>
         <button className="srow-main" onClick={() => onOpen(s.id)} onDoubleClick={() => setRenaming(s.id)}>
           <span className="srow-top">
-            {inTree && <span className="srow-agent" title={s.agent === 'claude' ? 'Claude' : s.agent === 'codex' ? 'Codex' : s.agent}><AgentTag agent={s.agent} bare /></span>}
+            {st && <span className={'srow-live ' + st} title={st === 'permission' ? t('在等你确认', 'Waiting for you') : t('正在生成', 'Working')}>{st === 'running' ? <Spinner size={11} /> : <i />}</span>}
+            {inTree && <span className="srow-agent" title={agentName(s.agent)}><AgentTag agent={s.agent} bare /></span>}
             {kind && <Icon name={kind === 'side' ? 'sidechat' : 'branch'} size={12} className="srow-kind" />}
             <span className="srow-title">{title}</span>
-            {st === 'permission' ? <span className="badge warn">{t('待确认', 'Needs you')}</span> : st === 'running' ? <Spinner size={12} /> : <span className="srow-time">{shortTime(ms(s.ended))}</span>}
+            {st === 'permission' ? <span className="badge warn">{t('待确认', 'Needs you')}</span> : <span className="srow-time">{st === 'running' ? t('生成中', 'working') : shortTime(ms(s.ended))}</span>}
           </span>
           {!inTree && (
             <span className="srow-meta">
@@ -308,6 +322,18 @@ export function Sidebar({
             {pinned.map((s) => row(s))}
           </div>
         )}
+        {recent.length > 1 && (() => {
+          const rOpen = isOpen('recent', true)
+          return (
+            <div className="sgroup">
+              <button className="sgroup-head fold" onClick={() => toggle('recent', rOpen)}>
+                <Icon name={rOpen ? 'down' : 'right'} size={11} />{t('最近', 'Recent')}
+                {!rOpen && liveMark(liveOf(recent))}
+              </button>
+              {rOpen && recent.map((s) => row(s))}
+            </div>
+          )
+        })()}
         {tree.map((node) => {
           const mOpen = isOpen(node.key, true)
           // Past the first few folders the rest wait behind "show more", except the one holding the open session.
@@ -315,14 +341,14 @@ export function Sidebar({
           const moreFolders = node.folders.length - folders.length
           return (
             <div className="tree-m" key={node.key}>
-              <div className={'tree-head m' + (node.runner ? ' can-add' : '')}>
+              <div className={'tree-head m' + (node.runner ? ' can-add' : '') + (mOpen ? ' open' : '')}>
                 <button className="tree-toggle" onClick={() => toggle(node.key, mOpen)} title={node.state === 'on' ? t('在线', 'Online') : node.state === 'off' ? t('不在线', 'Offline') : t('仅历史，没有接入操控', 'History only, no runner')}>
-                  <Icon name={mOpen ? 'down' : 'right'} size={12} className="chev" />
-                  <Icon name="machine" size={15} className="micon" />
+                  <Icon name={node.server ? 'server' : 'machine'} size={16} className="micon" />
                   <span className="tname">{node.label}</span>
                   <span className={'dot ' + node.state} />
-                  {!mOpen && liveMark(liveOf(node.folders.flatMap((f) => f.items)))}
                   <span className="tcount">{node.count}</span>
+                  {!mOpen && liveMark(liveOf(node.folders.flatMap((f) => f.items)))}
+                  <Icon name={mOpen ? 'down' : 'right'} size={12} className="chev" />
                 </button>
                 {node.runner && (
                   <button className="tree-add" title={t('在这台机器上开新会话，目录可以选或填', 'New session on this machine: pick or type the folder')} onClick={() => { startIn(node.name, ''); onNew() }}>
@@ -334,7 +360,11 @@ export function Sidebar({
                 <div className="tree-kids">
                   {folders.map((f) => {
                 const fOpen = isOpen(f.key, folderDefault(f))
-                const items = full[f.key] ? f.items : f.items.filter((s, i) => i < FOLDER_ROWS || s.id === currentId)
+                // Listed: the newest few of the last seven days, plus whatever is open or running.
+                // A folder opened although all of it is older shows its newest three.
+                const keep = (s: Session) => s.id === currentId || live.has(s.id)
+                const recent = f.items.filter((s, i) => (i < FOLDER_ROWS && fresh(s)) || keep(s))
+                const items = full[f.key] ? f.items : recent.some(fresh) || recent.length >= STALE_ROWS ? recent : f.items.filter((s, i) => i < STALE_ROWS || keep(s))
                 const more = f.items.length - items.length
                 const canStart = node.runner && !!f.cwd
                 return (
@@ -357,7 +387,7 @@ export function Sidebar({
                       <div className="tree-kids">
                         {items.map((s) => row(s, true))}
                         {more > 0 && (
-                          <button className="tree-more" onClick={() => setFull({ ...full, [f.key]: true })}>{t(`还有 ${more} 个会话`, `${more} more`)}</button>
+                          <button className="tree-more" onClick={() => setFull({ ...full, [f.key]: true })}>{t(`还有 ${more} 个更早的会话`, `${more} older`)}</button>
                         )}
                       </div>
                     )}
@@ -373,19 +403,30 @@ export function Sidebar({
             </div>
           )
         })}
-        {groups.map((g) => (
-          <div className="sgroup" key={g.key}>
-            <div className="sgroup-head">{g.label}</div>
-            {g.items.map((s) => row(s))}
-          </div>
-        ))}
+        {groups.map((g) => {
+          // By date: what is older than seven days waits behind its heading.
+          const gOpen = !g.old || isOpen('g:' + g.key, g.items.some((s) => s.id === currentId || live.has(s.id)))
+          return (
+            <div className="sgroup" key={g.key}>
+              {g.old ? (
+                <button className="sgroup-head fold" onClick={() => toggle('g:' + g.key, gOpen)}>
+                  <Icon name={gOpen ? 'down' : 'right'} size={11} />{g.label}
+                  {!gOpen && liveMark(liveOf(g.items))}
+                  <span className="tcount">{g.items.length}</span>
+                </button>
+              ) : <div className="sgroup-head">{g.label}</div>}
+              {gOpen && g.items.map((s) => row(s))}
+            </div>
+          )
+        })}
         {!showMinor && minorCount > 0 && (
           <button className="side-more" onClick={() => setShowMinor(true)}>{t(`还有 ${minorCount} 个没有对话内容的空会话 · 显示`, `${minorCount} empty sessions hidden · Show`)}</button>
         )}
       </div>
 
+      <UsageLine />
       <div className="side-foot">
-        <span className={'conn ' + (connected ? 'ok' : 'bad')} title={connected ? t('实时更新已连接', 'Live updates on') : t('实时更新断开，正在重连', 'Live updates lost, reconnecting')}>
+        <span className={'conn only-phone ' + (connected ? 'ok' : 'bad')} title={connected ? t('实时更新已连接', 'Live updates on') : t('实时更新断开，正在重连', 'Live updates lost, reconnecting')}>
           <span className="dot" />
           {connected ? (runnerCount ? t(`${onlineCount}/${runnerCount} 台机器在线`, `${onlineCount} of ${runnerCount} machines online`) : t('已连接', 'Connected')) : t('重连中…', 'Reconnecting…')}
         </span>

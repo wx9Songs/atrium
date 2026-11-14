@@ -1,7 +1,8 @@
 // One small global store: the session list, hub notes (pin/rename/hide),
 // machines, runs and their live events. Kept fresh by server-sent events.
 import { useSyncExternalStore } from 'react'
-import { api, Machine, Meta, Run, RunEvent, Session, setUnauthorizedHandler, TermEvent } from './api'
+import { plainMessage } from './attach'
+import { api, Machine, Meta, Run, RunEvent, Session, setUnauthorizedHandler, TermEvent, Usage } from './api'
 import { t } from './i18n'
 
 export type State = {
@@ -18,6 +19,8 @@ export type State = {
   runs: Record<string, Run>
   machines: Machine[]
   events: Record<string, RunEvent[]>
+  /** Tokens of the last week; null until first read. */
+  usage: Usage | null
 }
 
 let state: State = {
@@ -33,6 +36,7 @@ let state: State = {
   runs: {},
   machines: [],
   events: {},
+  usage: null,
 }
 
 const listeners = new Set<() => void>()
@@ -81,6 +85,7 @@ export async function boot() {
     if (a.authed) {
       await refreshSessions()
       connect()
+      watchUsage()
     }
   } catch (e: any) {
     set({ authed: false, loadError: e.message || t('连不上服务器', 'Cannot reach the server') })
@@ -92,6 +97,7 @@ export async function signIn(code: string) {
   set({ authed: true, loadError: '' })
   await refreshSessions()
   connect()
+  watchUsage()
 }
 
 export async function signOut() {
@@ -127,6 +133,27 @@ export function refreshSessions(fresh = false): Promise<void> {
     }
   })()
   return refreshing
+}
+
+// Token counts change slowly (the archive learns of new turns about a minute
+// after they end), so they are read now and then rather than pushed.
+let usageTimer: number | undefined
+let usageAt = 0
+
+export async function refreshUsage(force = false) {
+  if (!state.authed || (!force && Date.now() - usageAt < 30_000)) return
+  usageAt = Date.now()
+  try {
+    set({ usage: await api.usage() })
+  } catch {
+    /* keep what is shown */
+  }
+}
+
+function watchUsage() {
+  refreshUsage(true)
+  window.clearInterval(usageTimer)
+  usageTimer = window.setInterval(() => { if (document.visibilityState === 'visible') refreshUsage() }, 5 * 60_000)
 }
 
 const loadingEvents = new Set<string>()
@@ -194,7 +221,7 @@ export function tellNative(msg: Record<string, unknown>) {
 
 function runTitle(r: Run): string {
   const s = state.sessions.find((x) => x.id === r.session_id)
-  const t = (s && (state.meta[s.id]?.title || s.title)) || r.prompt
+  const t = (s && (state.meta[s.id]?.title || s.title)) || plainMessage(r.prompt)
   return t.replace(/\s+/g, ' ').trim().slice(0, 80)
 }
 
@@ -257,6 +284,7 @@ function connect() {
       set({ runs, events: list ? state.events : { ...state.events, [d.run.id]: [] } })
     }
     if (!known || isTerminal(d.run)) scheduleSessionsRefresh(isTerminal(d.run) ? 2500 : 400)
+    if (isTerminal(d.run)) window.setTimeout(() => refreshUsage(true), 90_000) // once the turn has reached the archive
   })
   es.addEventListener('term', (e) => {
     const d = JSON.parse((e as MessageEvent).data) as TermEvent
@@ -283,7 +311,7 @@ function connect() {
 
 // When the tab becomes visible again, make sure the list is current.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && state.authed) refreshSessions()
+  if (document.visibilityState === 'visible' && state.authed) { refreshSessions(); refreshUsage() }
 })
 
 /**

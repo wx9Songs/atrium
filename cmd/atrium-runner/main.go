@@ -45,8 +45,14 @@ type Config struct {
 	// AllowShell turns on the page's Terminal panel (a login shell on this
 	// machine) and its Files panel (browse, read and save files). Off unless
 	// you turn it on here: without it the runner can only ever start `claude`
-	// and `codex`, and reads nothing but folder names for the new-session picker.
+	// and `codex`, reads nothing but folder names for the new-session picker,
+	// and writes nothing but the attachments of a message, into its own cache folder.
 	AllowShell bool `json:"allow_shell,omitempty"`
+	// RootSandbox lets "Allow everything" work when the runner is root. Claude
+	// Code refuses to skip permission prompts as root unless it is told the
+	// machine is a sandbox (IS_SANDBOX=1); with this on, the runner tells it so.
+	// Only for a throwaway machine such as a container. Off by default.
+	RootSandbox bool `json:"root_sandbox,omitempty"`
 }
 
 type Job struct {
@@ -69,6 +75,8 @@ type Job struct {
 	// message (ForkBefore*): what was said from there on stays in the transcript
 	// as a branch the session no longer follows, the way the CLI's own rewind does.
 	Rewind bool `json:"rewind"`
+	// Files are the attachments the prompt names (see upload.go).
+	Files []string `json:"files"`
 }
 
 type outEvent struct {
@@ -201,6 +209,7 @@ func (r *Runner) loop() {
 				log.Printf("connected to hub")
 			}
 			needHello, lastHello, fail = false, time.Now(), 0
+			go r.reportLimits("codex", codexLimits(r.codexHomes()))
 			if time.Since(lastProbe) > 6*time.Hour {
 				lastProbe = time.Now()
 				go r.probeCaps()
@@ -329,7 +338,7 @@ func (r *Runner) hello() error {
 		"shell":  r.cfg.AllowShell,
 		"terms":  terms,
 		// What this runner understands, so the page only offers what will work.
-		"features": []string{"fork", "caps", "term", "files", "effort", "rewind"},
+		"features": []string{"fork", "caps", "term", "files", "effort", "rewind", "limits", "upload"},
 	}
 	if err := r.request("POST", "/api/runner/hello", body, nil, 30*time.Second); err != nil {
 		return err
@@ -361,6 +370,8 @@ func (r *Runner) handle(raw json.RawMessage) {
 		Data      string          `json:"data"`
 		Content   string          `json:"content"`
 		Mtime     int64           `json:"mtime"`
+		Blob      string          `json:"blob"`
+		Name      string          `json:"name"`
 	}
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return
@@ -393,6 +404,9 @@ func (r *Runner) handle(raw json.RawMessage) {
 		r.termResize(c.TermID, c.Cols, c.Rows)
 	case "term_close":
 		r.termClose(c.TermID)
+	case "upload":
+		data, err := r.upload(c.Blob, c.Name)
+		r.reply(c.ID, data, err)
 	case "fs_list":
 		data, err := r.fsList(c.Path)
 		r.reply(c.ID, data, err)
@@ -427,6 +441,7 @@ func (r *Runner) start(job Job) {
 		err = p.runClaude()
 	case "codex":
 		err = p.runCodex()
+		r.reportLimits("codex", codexLimits(r.codexHomes())) // the turn just wrote a new reading
 	default:
 		err = bif("不支持的助手：%s", "Unsupported agent: %s", job.Agent)
 	}

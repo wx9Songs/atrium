@@ -34,6 +34,9 @@ type Server struct {
 	terms *Terms
 	bus   *Bus
 
+	usage usageCache
+
+	blobs    blobStore
 	loginMu  sync.Mutex
 	loginHit []time.Time
 }
@@ -67,6 +70,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/tool", b(s.handleTool))
 	mux.HandleFunc("POST /api/sessions/{id}/meta", b(s.handleMeta))
 	mux.HandleFunc("GET /api/search", b(s.handleSearch))
+	mux.HandleFunc("GET /api/usage", b(s.handleUsage))
 	mux.HandleFunc("GET /api/runs", b(s.handleRuns))
 	mux.HandleFunc("POST /api/runs", b(s.handleCreateRun))
 	mux.HandleFunc("GET /api/runs/{id}/events", b(s.handleRunEvents))
@@ -79,6 +83,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/terms/{id}", b(s.handleTermGet))
 	mux.HandleFunc("POST /api/terms/{id}/{op}", b(s.handleTermCommand))
 	mux.HandleFunc("POST /api/fs/{op}", b(s.handleFs))
+	mux.HandleFunc("POST /api/upload", b(s.handleUpload))
+	mux.HandleFunc("GET /api/attachment/{folder}/{name}", b(s.handleAttachment))
 	mux.HandleFunc("GET /api/events", b(s.handleEvents))
 
 	rn := s.runner
@@ -86,6 +92,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/runner/poll", rn(s.handleRunnerPoll))
 	mux.HandleFunc("POST /api/runner/events", rn(s.handleRunnerEvents))
 	mux.HandleFunc("POST /api/runner/reply", rn(s.handleRunnerReply))
+	mux.HandleFunc("GET /api/runner/blob", rn(s.handleRunnerBlob))
 
 	mux.Handle("/", s.static())
 	return gzipMiddleware(mux)

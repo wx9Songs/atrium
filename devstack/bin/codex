@@ -10,6 +10,10 @@ if (argv.includes('--version')) {
   console.log('codex-cli 0.164.0 (dev stand-in)')
   process.exit(0)
 }
+if (argv.includes('--help')) {
+  console.log('Usage: codex exec [resume]\n  -i, --image <FILE>  Optional image(s) to attach')
+  process.exit(0)
+}
 if (argv[0] === 'debug' && argv[1] === 'models') {
   const levels = (list) => list.map((effort) => ({ effort, description: '' }))
   const all = ['low', 'medium', 'high', 'xhigh', 'max']
@@ -54,7 +58,7 @@ const listing = 'total 24\n-rw-r--r--  1 dev  staff  1125 Makefile\n-rw-r--r--  
 out({ type: 'item.completed', item: { id: 'item_1', type: 'command_execution', command: "bash -lc 'ls -la'", aggregated_output: listing, exit_code: 0, status: 'completed' } })
 await sleep(600)
 const users = messages.filter((m) => m.role === 'user').length
-const text = `Done. (Fake Codex in the dev environment${modelIdx >= 0 ? ', model ' + argv[modelIdx + 1] : ''}${effortArg ? ', ' + effortArg.replace(/"/g, '') : ''}; this thread now has ${users} user message${users > 1 ? 's' : ''}${sub === 'fork' ? ', forked from ' + srcId.slice(0, 8) : ''}.)\n\n- listed the working tree\n- nothing needed changing`
+const text = `Done. (Fake Codex in the dev environment${modelIdx >= 0 ? ', model ' + argv[modelIdx + 1] : ''}${effortArg ? ', ' + effortArg.replace(/"/g, '') : ''}; this thread now has ${users} user message${users > 1 ? 's' : ''}${sub === 'fork' ? ', forked from ' + srcId.slice(0, 8) : ''}${argv.includes('-i') ? ', ' + argv.filter((x) => x === '-i').length + ' image(s) attached' : ''}.)\n\n- listed the working tree\n- nothing needed changing`
 out({ type: 'item.completed', item: { id: 'item_2', type: 'agent_message', text } })
 push('assistant', text, {
   thinking_text: 'Looking around', has_tool_use: true, model: 'gpt-5.5-codex',
@@ -70,4 +74,8 @@ const d = new Date()
 const dir = path.join(home, 'sessions', String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'))
 fs.mkdirSync(dir, { recursive: true })
 fs.appendFileSync(path.join(dir, `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd } }) + '\n')
+// The plan allowance, where the real CLI records it: after each turn, in the session file.
+const W = 7 * 86400_000
+fs.appendFileSync(path.join(dir, `rollout-${id}.jsonl`), JSON.stringify({ timestamp: d.toISOString(), type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 1200, output_tokens: 80 } },
+  rate_limits: { primary: { used_percent: Math.round((+d % W) / W * 40), window_minutes: 10080, resets_at: Math.ceil(+d / W) * W / 1000 }, secondary: null, plan_type: 'plus' } } }) + '\n')
 out({ type: 'turn.completed', usage: { input_tokens: 1200, output_tokens: 80 } })

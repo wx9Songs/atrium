@@ -1,4 +1,5 @@
 // Types and HTTP helpers for the hub API.
+import { splitAttachments } from './attach'
 import { t, lang } from './i18n'
 
 export type Session = {
@@ -36,6 +37,23 @@ export type SlashCmd = { name: string; description?: string; hint?: string }
 export type ModelOpt = { value: string; name?: string; description?: string; efforts?: string[]; default_effort?: string }
 export type Caps = { commands?: SlashCmd[]; models?: ModelOpt[]; default_model?: string; default_effort?: string }
 
+/** One allowance of an agent's plan: `minutes` long, `used` percent spent, starting over at `resets` (ms). */
+export type LimitWindow = { id: string; minutes?: number; used: number; resets?: number }
+/** An agent's allowances as the CLI on one machine last saw them, at time `at` (ms). */
+export type Limits = { agent: string; at: number; plan?: string; status?: string; windows: LimitWindow[] }
+
+/** Tokens counted from the transcripts; `cost` is an estimate at public API prices, in dollars. */
+export type Tokens = { in: number; out: number; cache_read: number; cache_write: number; cost: number }
+export type Usage = {
+  /** False when the archive cannot count tokens. */
+  available: boolean
+  /** The last seven days, oldest first, today last. */
+  days: (Tokens & { date: string; agents?: Record<string, Tokens> })[]
+  agents: (Tokens & { name: string })[]
+  models: (Tokens & { name: string })[]
+  machines: (Tokens & { name: string })[]
+}
+
 export type Machine = {
   name: string
   label: string
@@ -45,6 +63,8 @@ export type Machine = {
   info?: any
   /** Per agent: what its CLI on this machine offers. */
   caps?: Record<string, Caps>
+  /** Per agent: how much of the plan allowance is used. */
+  limits?: Record<string, Limits>
 }
 
 export type ForkReq = {
@@ -209,6 +229,8 @@ export const api = {
   },
   tool: (id: string, ord: number, i: number) => req<Tool>(`/api/sessions/${enc(id)}/tool?ord=${ord}&i=${i}`),
   setMeta: (id: string, patch: Meta) => req<Meta>(`/api/sessions/${enc(id)}/meta`, { method: 'POST', body: patch }),
+  /** Tokens of the last seven days, with days cut at this browser's midnight. */
+  usage: () => req<Usage>(`/api/usage?tz=${enc(Intl.DateTimeFormat().resolvedOptions().timeZone || '')}`),
   search: (q: string) => req<{ hits: SearchHit[] }>(`/api/search?q=${enc(q)}`),
   runs: () => req<{ runs: Run[] }>('/api/runs'),
   runEvents: (id: string, after = 0) => req<{ run: Run; events: RunEvent[] }>(`/api/runs/${enc(id)}/events?after=${after}`),
@@ -224,7 +246,27 @@ export const api = {
     fork?: ForkReq
     /** Continue `session_id` itself from just before one of its messages (edit, try again). */
     rewind?: { before_ts?: string; before_text: string }
-  }) => req<{ run: Run }>('/api/runs', { method: 'POST', body }),
+    // The attachments a message names go along as a list, so the runner can hand them to the agent.
+  }) => req<{ run: Run }>('/api/runs', { method: 'POST', body: { ...body, files: splitAttachments(body.prompt).files } }),
+  /** Save a file on a machine as an attachment; answers with the path it was saved under. */
+  upload: async (machine: string, name: string, file: Blob) => {
+    let res: Response
+    try {
+      res = await fetch(`/api/upload?machine=${enc(machine)}&name=${enc(name)}`, {
+        method: 'POST', body: file, credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/octet-stream', 'X-Atrium-Lang': lang },
+      })
+    } catch {
+      throw new ApiError(0, t('连不上服务器，请检查网络或隧道', 'Cannot reach the server. Check the network or the tunnel'))
+    }
+    if (res.status === 401) {
+      onUnauthorized()
+      throw new ApiError(401, t('登录已失效', 'Signed out'))
+    }
+    const data = await res.json().catch(() => null)
+    if (!res.ok || !data?.path) throw new ApiError(res.status, data?.error || t(`上传失败（${res.status}）`, `Upload failed (${res.status})`))
+    return data as { path: string; name: string; size: number }
+  },
   permission: (
     runId: string,
     body: { request_id: string; behavior: 'allow' | 'deny'; message?: string; always?: boolean; input?: any },
