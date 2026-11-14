@@ -110,6 +110,27 @@ export type Run = {
   last_ts?: number
   perm?: PermReq
   seq: number
+  /** What the runner last reported for the Info panel during this run. */
+  info?: SessionInfo
+}
+
+export type ContextUse = {
+  used: number; max?: number; percent?: number; model?: string
+  categories: { id: string; name: string; tokens: number; kind: string }[]
+  memory?: { path: string; type?: string; tokens?: number }[]
+  skills?: { count?: number; tokens?: number }
+  mcp_tools?: { server: string; tools: number; loaded: number; tokens: number }[]
+}
+export type BgTask = { id: string; type: string; description: string; status: string; started?: number; ended?: number; summary?: string }
+/** The Info panel's data: from a run in flight (by part), or read from the session's machine. */
+export type SessionInfo = {
+  context?: ContextUse
+  tasks?: BgTask[]
+  mcp?: { name: string; status: string; scope?: string }[]
+  session?: { model?: string; effort?: string; mode?: string; version?: string; approval?: string; sandbox?: string; tools?: number; skills?: number; plugins?: number; agents?: number }
+  last?: { cost?: number; duration_ms?: number; turns?: number; models?: { model: string; in?: number; out?: number; cache_read?: number; cache_write?: number; cost?: number }[] }
+  account?: { plan?: string }
+  totals?: { input?: number; cached?: number; output?: number; reasoning?: number }
 }
 
 export type RunEvent = { seq: number; t: string; ts: number; data?: any }
@@ -278,6 +299,8 @@ export const api = {
       body: { machine, path },
     }),
   /** Have a machine's runner ask its agents again for their models and commands. */
+  sessionInfo: (id: string) => req<SessionInfo>('/api/session-info?id=' + enc(id)),
+  stopTask: (runId: string, taskId: string) => req<{ ok: boolean }>(`/api/runs/${enc(runId)}/stop-task`, { method: 'POST', body: { task_id: taskId } }),
   capsRefresh: (machine: string) => req<{ machines: Machine[] }>(`/api/machines/${enc(machine)}/caps`, { method: 'POST', body: {} }),
   terms: () => req<{ terms: Term[] }>('/api/terms'),
   termOpen: (body: { machine: string; key: string; cwd: string; cols: number; rows: number }) => req<{ term: Term }>('/api/terms', { method: 'POST', body }),

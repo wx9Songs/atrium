@@ -418,6 +418,50 @@ func (s *Server) finishRun(id, status string, cause error) {
 	}
 }
 
+// handleSessionInfo asks the session's machine what the Info panel shows for a
+// session at rest: how full its context is, its model, its MCP servers.
+func (s *Server) handleSessionInfo(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.arc.Find(r.Context(), r.URL.Query().Get("id"))
+	if !ok {
+		writeErr(w, 404, L(r, "找不到这个会话", "Session not found"))
+		return
+	}
+	if !s.mach.has(sess.Machine) || !s.mach.online(sess.Machine) {
+		writeErr(w, http.StatusConflict, L(r, "这台机器现在不在线", "This machine is offline"))
+		return
+	}
+	if !s.mach.supports(sess.Machine, "info") {
+		writeErr(w, http.StatusConflict, L(r, "这台机器上的 runner 版本较旧，还不能读取会话信息", "The runner on this machine is too old to report session info"))
+		return
+	}
+	data, err := s.mach.rpc(r.Context(), sess.Machine, map[string]any{"type": "session_info", "agent": sess.Agent, "native_id": sess.NativeID}, 60*time.Second)
+	if err != nil {
+		writeErr(w, http.StatusConflict, errText(r, err))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write(data)
+}
+
+// handleStopTask stops one background task of a running turn.
+func (s *Server) handleStopTask(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.runs.Get(r.PathValue("id"))
+	var body struct {
+		TaskID string `json:"task_id"`
+	}
+	if err := readJSON(r, &body, 1<<12); err != nil || !ok || body.TaskID == "" || len(body.TaskID) > 100 {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	if terminal(run.Status) {
+		writeErr(w, http.StatusConflict, L(r, "这次运行已经结束", "This run has ended"))
+		return
+	}
+	s.mach.enqueue(run.Machine, map[string]any{"id": "c" + randToken(9), "type": "stop_task", "run_id": run.ID, "task_id": body.TaskID})
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
 // handleCapsRefresh asks a machine's runner to read its agents' models and commands again.
 func (s *Server) handleCapsRefresh(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
@@ -604,6 +648,20 @@ func (s *Server) applyRunEvent(machine string, ev inEvent) {
 			x.LastTS = ev.TS
 			if x.Status == "starting" || x.Status == "queued" {
 				x.Status = "running"
+			}
+		case "info":
+			var parts map[string]json.RawMessage
+			if json.Unmarshal(ev.Data, &parts) != nil {
+				return
+			}
+			for k, v := range parts {
+				if len(k) > 20 || len(v) > 64<<10 || len(x.Info) >= 12 && x.Info[k] == nil {
+					continue
+				}
+				if x.Info == nil {
+					x.Info = map[string]json.RawMessage{}
+				}
+				x.Info[k] = v
 			}
 		case "permission":
 			var p PermReq

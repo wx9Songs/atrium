@@ -76,6 +76,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/events", b(s.handleRunEvents))
 	mux.HandleFunc("POST /api/runs/{id}/permission", b(s.handlePermission))
 	mux.HandleFunc("POST /api/runs/{id}/stop", b(s.handleStop))
+	mux.HandleFunc("POST /api/runs/{id}/stop-task", b(s.handleStopTask))
+	mux.HandleFunc("GET /api/session-info", b(s.handleSessionInfo))
 	mux.HandleFunc("POST /api/ls", b(s.handleLs))
 	mux.HandleFunc("POST /api/machines/{name}/caps", b(s.handleCapsRefresh))
 	mux.HandleFunc("GET /api/terms", b(s.handleTermList))

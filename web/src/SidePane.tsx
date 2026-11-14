@@ -1,4 +1,4 @@
-// The panel to the right of a conversation: side chats, a terminal on the
+// The panel to the right of a conversation: the session's info, side chats, a terminal on the
 // session's machine, and its files.
 import { lazy, Suspense, useMemo } from 'react'
 import { Machine, Session } from './api'
@@ -6,6 +6,7 @@ import { Composer, RunPrefs } from './Composer'
 import { allSessions, resolveKey } from './derive'
 import { Files } from './Files'
 import { Icon, Spinner } from './icons'
+import { InfoPane } from './InfoPane'
 import { Pane, SessionView } from './SessionView'
 import { useStore } from './store'
 import { Dropdown, MenuItem, toast, usePersisted } from './ui'
@@ -32,7 +33,7 @@ export function SidePane({
   onOpen: (key: string) => void
 }) {
   const [wide, setWide] = usePersisted('atrium.pane.wide', false)
-  const tabs: [Pane, string, string][] = [['side', 'sidechat', t('边聊', 'Side chat')], ['terminal', 'terminal', t('终端', 'Terminal')], ['files', 'folder', t('文件', 'Files')]]
+  const tabs: [Pane, string, string][] = [['info', 'list', t('信息', 'Info')], ['side', 'sidechat', t('边聊', 'Side chat')], ['terminal', 'terminal', t('终端', 'Terminal')], ['files', 'folder', t('文件', 'Files')]]
   return (
     <aside className={'pane' + (wide ? ' wide' : '')}>
       <div className="pane-head" data-drag>
@@ -45,7 +46,9 @@ export function SidePane({
         <button className="iconbtn" onClick={() => setWide(!wide)} title={wide ? t('收窄面板', 'Narrow the panel') : t('加宽面板', 'Widen the panel')}><Icon name={wide ? 'narrow' : 'widen'} size={16} /></button>
         <button className="iconbtn" onClick={() => setTab('')} title={t('关闭面板', 'Close panel')}><Icon name="x" size={16} /></button>
       </div>
-      {tab === 'side' ? (
+      {tab === 'info' ? (
+        <InfoPane session={session} machine={machine} />
+      ) : tab === 'side' ? (
         <SideChat session={session} machine={machine} thread={thread} setThread={setThread} forkWhy={forkWhy} prefs={prefs} onStart={onStartSide} onOpen={onOpen} />
       ) : !hasShell(machine) || !hasFeature(machine, tab === 'files' ? 'files' : 'term') ? (
         <ShellOff session={session} machine={machine} what={tab === 'files' ? 'files' : 'term'} />

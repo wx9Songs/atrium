@@ -59,6 +59,9 @@ type Run struct {
 	LastTS    int64    `json:"last_ts,omitempty"`
 	Perm      *PermReq `json:"perm,omitempty"`
 	Seq       int      `json:"seq"`
+	// Info is what the runner last reported for the page's Info panel, by part:
+	// "context", "tasks", "mcp", "session", "last", "account" (see the runner's info.go).
+	Info map[string]json.RawMessage `json:"info,omitempty"`
 }
 
 type RunEvent struct {

@@ -338,7 +338,7 @@ func (r *Runner) hello() error {
 		"shell":  r.cfg.AllowShell,
 		"terms":  terms,
 		// What this runner understands, so the page only offers what will work.
-		"features": []string{"fork", "caps", "term", "files", "effort", "rewind", "limits", "upload"},
+		"features": []string{"fork", "caps", "term", "files", "effort", "rewind", "limits", "upload", "info"},
 	}
 	if err := r.request("POST", "/api/runner/hello", body, nil, 30*time.Second); err != nil {
 		return err
@@ -372,6 +372,9 @@ func (r *Runner) handle(raw json.RawMessage) {
 		Mtime     int64           `json:"mtime"`
 		Blob      string          `json:"blob"`
 		Name      string          `json:"name"`
+		Agent     string          `json:"agent"`
+		NativeID  string          `json:"native_id"`
+		TaskID    string          `json:"task_id"`
 	}
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return
@@ -390,6 +393,13 @@ func (r *Runner) handle(raw json.RawMessage) {
 			// Nothing to stop here (never started, or already gone): close it on the hub.
 			r.emit(c.RunID, "exit", map[string]any{"stopped": true})
 		}
+	case "stop_task":
+		if p := r.proc(c.RunID); p != nil && c.TaskID != "" {
+			p.stopTask(c.TaskID)
+		}
+	case "session_info":
+		data, err := r.sessionInfo(c.Agent, c.NativeID)
+		r.reply(c.ID, data, err)
 	case "ls":
 		data, err := r.ls(c.Path)
 		r.reply(c.ID, data, err)

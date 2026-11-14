@@ -28,7 +28,7 @@ export const runError = (r: Run) => (lang === 'zh' ? r.error_zh || r.error : r.e
 /** Which side chat each session last showed, for as long as the page is open. */
 const lastThread = new Map<string, string>()
 
-export type Pane = '' | 'side' | 'terminal' | 'files'
+export type Pane = '' | 'info' | 'side' | 'terminal' | 'files'
 
 export function SessionView({
   id, focusOrd, onBack, onOpen, onNew, onSearch, variant = 'main', sidebarHidden, onShowSidebar,
@@ -482,6 +482,7 @@ export function SessionView({
     { name: 'fork', description: t('从当前位置分叉出一个新会话', 'Branch off into a new session from here'), disabled: forkWhy, run: () => actions!.onBranch() },
     { name: 'side', description: t('边聊：问个旁支问题，不写进这个会话', 'Side chat: ask something without adding it to this session'), disabled: forkWhy, run: (arg) => openSide(arg) },
     { name: 'retry', description: t('重新生成上一条回复（在新分支里）', 'Try the last message again (in a new branch)'), disabled: cutOK ? (lastUser && !active ? '' : t('现在没有可以重试的消息', 'Nothing to retry right now')) : forkWhy || t('Codex 会话只能从末尾分叉', 'Codex sessions can only fork from the end'), run: () => lastUser && actions!.onRetry(lastUser) },
+    { name: 'context', description: t('看上下文占用、后台任务和会话信息', 'Show context use, background tasks and session info'), run: () => setPane('info') },
     { name: 'terminal', description: t('打开这台机器上的终端', 'Open a terminal on this machine'), run: () => setPane('terminal') },
     { name: 'files', description: t('浏览和编辑会话目录里的文件', "Browse and edit files in the session's folder"), run: () => setPane('files') },
     { name: 'model', description: t('换一个模型', 'Choose a model'), run: (arg) => { if (arg) prefs.setModel(arg) } },
@@ -494,7 +495,8 @@ export function SessionView({
   ]
 
   cmdRef.current = (c) => {
-    if (c === 'side') setPane(pane === 'side' ? '' : 'side')
+    if (c === 'info') setPane(pane === 'info' ? '' : 'info')
+    else if (c === 'side') setPane(pane === 'side' ? '' : 'side')
     else if (c === 'terminal') setPane(pane === 'terminal' ? '' : 'terminal')
     else if (c === 'files') setPane(pane === 'files' ? '' : 'files')
     else if (c === 'fork') actions?.onBranch()
@@ -640,6 +642,9 @@ export function SessionView({
             <button className={'iconbtn' + (branch ? ' active' : '') + (forkOK ? '' : ' off')} title={forkOK ? t('分叉：从当前位置开一个新会话', 'Fork: branch off into a new session from here') : forkWhy} onClick={() => (branch ? setBranch(null) : actions!.onBranch())}>
               <Icon name="branch" size={17} />
             </button>
+            <button className={'iconbtn' + (pane === 'info' ? ' active' : '')} title={t('会话信息：上下文、后台任务', 'Session info: context, background tasks') + ' ' + kbd('I')} onClick={() => setPane(pane === 'info' ? '' : 'info')}>
+              <Icon name="list" size={17} />
+            </button>
             <button className={'iconbtn' + (pane === 'side' ? ' active' : '')} title={t('边聊', 'Side chat') + ' ' + kbd('.')} onClick={() => setPane(pane === 'side' ? '' : 'side')}>
               <Icon name="sidechat" size={17} />
             </button>
@@ -690,6 +695,8 @@ export function SessionView({
 // ---------- run status + permission ----------
 
 function RunStatus({ run }: { run: Run }) {
+  // The reply is in, but the agent's background tasks keep the turn open (the Info panel lists them).
+  const waiting = run.status === 'running' && run.info?.last ? (run.info.tasks || []).filter((x) => x.status === 'running').length : 0
   const [, tick] = useState(0)
   useEffect(() => {
     const t = setInterval(() => tick((x) => x + 1), 1000)
@@ -702,7 +709,7 @@ function RunStatus({ run }: { run: Run }) {
       {run.perm ? <PermissionCard run={run} perm={run.perm} /> : (
         <div className="running-line">
           <Spinner size={14} />
-          <span className="shimmer">{statusText[run.status] || run.status}</span>
+          <span className="shimmer">{waiting ? t(`等 ${waiting} 个后台任务结束`, `Waiting for ${waiting} background task${waiting > 1 ? 's' : ''}`) : statusText[run.status] || run.status}</span>
           <span className="dim">{elapsed}</span>
         </div>
       )}

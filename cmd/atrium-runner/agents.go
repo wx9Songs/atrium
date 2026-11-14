@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -35,6 +36,9 @@ type proc struct {
 	stdinClosed bool
 	stopped     bool
 	pending     map[string]pendingPerm
+
+	tasks    taskBook // background tasks the agent started (Claude)
+	activity int64    // counts the agent's messages, to tell a quiet process from a working one
 }
 
 func (p *proc) isStopped() bool {
@@ -393,15 +397,37 @@ func (p *proc) runClaude() error {
 		p.write(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": job.Prompt}, "parent_tool_use_id": nil})
 	}
 
+	// Questions to the running CLI for the page's Info panel (see info.go).
+	askedCtx := time.Time{}
+	var spentMs, steps float64 // of all the turns of this run
+	ask := func(what, subtype string) {
+		if what == "ctx" {
+			askedCtx = time.Now()
+		}
+		p.write(map[string]any{"type": "control_request", "request_id": what + "_" + job.ID, "request": map[string]any{"subtype": subtype}})
+	}
+
 	onLine := func(m map[string]any) {
 		switch str(m, "type") {
 		case "control_response":
 			// The answer to "initialize" lists this install's slash commands and models.
 			resp, _ := m["response"].(map[string]any)
-			if resp != nil && str(resp, "request_id") == "init_"+job.ID {
-				if inner, _ := resp["response"].(map[string]any); inner != nil {
-					r.reportCaps("claude", claudeCaps(inner))
+			inner, _ := resp["response"].(map[string]any)
+			if inner == nil {
+				return
+			}
+			switch str(resp, "request_id") {
+			case "init_" + job.ID:
+				r.reportCaps("claude", claudeCaps(inner))
+				if acct, _ := inner["account"].(map[string]any); acct != nil {
+					r.emit(job.ID, "info", map[string]any{"account": map[string]any{"plan": str(acct, "subscriptionType")}})
 				}
+			case "ctx_" + job.ID:
+				if c := slimContext(inner); c != nil {
+					r.emit(job.ID, "info", map[string]any{"context": c})
+				}
+			case "mcp_" + job.ID:
+				r.emit(job.ID, "info", map[string]any{"mcp": slimMCP(inner)})
 			}
 		case "control_request":
 			req, _ := m["request"].(map[string]any)
@@ -442,6 +468,29 @@ func (p *proc) runClaude() error {
 					"type": "system", "subtype": "init", "session_id": str(m, "session_id"), "model": m["model"],
 					"cwd": m["cwd"], "permissionMode": m["permissionMode"], "version": m["claude_code_version"],
 				})
+				atomic.AddInt64(&p.activity, 1)
+				count := func(k string) int { l, _ := m[k].([]any); return len(l) }
+				r.emit(job.ID, "info", map[string]any{"session": map[string]any{
+					"model": m["model"], "mode": m["permissionMode"], "version": m["claude_code_version"], "output_style": m["output_style"],
+					"tools": count("tools"), "skills": count("skills"), "plugins": count("plugins"), "agents": count("agents"),
+				}})
+				ask("ctx", "get_context_usage")
+				ask("mcp", "mcp_status")
+			case "background_tasks_changed", "task_started", "task_updated", "task_notification":
+				if p.tasks.apply(m) {
+					r.emit(job.ID, "info", map[string]any{"tasks": p.tasks.list()})
+				}
+				// The turn is over and the last background task has ended. The CLI usually
+				// goes on to tell the agent about it; if it stays quiet, let it exit.
+				if gotResult && p.tasks.running() == 0 {
+					seen := atomic.LoadInt64(&p.activity)
+					go func() {
+						time.Sleep(12 * time.Second)
+						if atomic.LoadInt64(&p.activity) == seen {
+							p.closeStdin()
+						}
+					}()
+				}
 			case "compact_boundary":
 				r.emit(job.ID, "agent", map[string]any{"type": "system", "subtype": "compact_boundary"})
 			}
@@ -449,8 +498,12 @@ func (p *proc) runClaude() error {
 			if m["parent_tool_use_id"] != nil {
 				return // inside a sub-agent; the main thread shows its result
 			}
+			atomic.AddInt64(&p.activity, 1)
 			if s := slimClaude(m); s != nil {
 				r.emit(job.ID, "agent", s)
+			}
+			if time.Since(askedCtx) > 30*time.Second {
+				ask("ctx", "get_context_usage")
 			}
 		case "rate_limit_event":
 			info, _ := m["rate_limit_info"].(map[string]any)
@@ -470,7 +523,25 @@ func (p *proc) runClaude() error {
 				"duration_ms": m["duration_ms"], "total_cost_usd": m["total_cost_usd"], "num_turns": m["num_turns"],
 				"session_id": m["session_id"],
 			})
-			p.closeStdin() // one turn per process
+			atomic.AddInt64(&p.activity, 1)
+			// A run can hold several turns (the CLI starts one for each word from a
+			// background task). Time and steps add up; cost and tokens already do.
+			if n, _ := m["duration_ms"].(float64); n > 0 {
+				spentMs += n
+			}
+			if n, _ := m["num_turns"].(float64); n > 0 {
+				steps += n
+			}
+			r.emit(job.ID, "info", map[string]any{"last": map[string]any{
+				"cost": m["total_cost_usd"], "duration_ms": spentMs, "turns": steps, "models": slimModelUsage(m["modelUsage"]),
+			}})
+			ask("ctx", "get_context_usage")
+			// One turn per process. With background tasks still going the CLI stays up
+			// until they end (and tells the agent); its input stays open meanwhile so
+			// that a task can still be stopped from the page.
+			if p.tasks.running() == 0 {
+				p.closeStdin()
+			}
 		}
 	}
 

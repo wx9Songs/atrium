@@ -136,6 +136,9 @@ function Shell({ theme, setTheme }: { theme: ThemeChoice; setTheme: (t: ThemeCho
       } else if (mod && k === '.') {
         e.preventDefault()
         cmd('side')
+      } else if (mod && k === 'i' && !e.shiftKey && !e.altKey) {
+        e.preventDefault()
+        cmd('info')
       } else if (mod && k === 'j') {
         e.preventDefault()
         cmd('terminal')

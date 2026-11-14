@@ -125,7 +125,8 @@ const history = () => lines.filter((l) => l.type === 'user' && typeof l.message?
 
 async function turn(prompt) {
   const t0 = Date.now()
-  out({ type: 'system', subtype: 'init', session_id: sid, model, cwd, permissionMode: mode, claude_code_version: '2.1.308', slash_commands: COMMANDS.map((c) => c.name) })
+  out({ type: 'system', subtype: 'init', session_id: sid, model, cwd, permissionMode: mode, claude_code_version: '2.1.308', slash_commands: COMMANDS.map((c) => c.name),
+    tools: Array(42).fill('t'), skills: Array(27).fill('s'), plugins: [], agents: ['general-purpose', 'Explore'], output_style: 'default' })
   add('user', { role: 'user', content: prompt })
   // The plan allowance, as the real CLI reports it with every turn: it creeps up as the day goes on.
   const now = Date.now(), H = 3600_000
@@ -135,7 +136,8 @@ async function turn(prompt) {
   } } })
   const done = (result, is_error = false) => {
     publish()
-    out({ type: 'result', subtype: is_error ? 'error_during_execution' : 'success', is_error, result, duration_ms: Date.now() - t0, total_cost_usd: 0.0421, num_turns: 3, session_id: sid })
+    out({ type: 'result', subtype: is_error ? 'error_during_execution' : 'success', is_error, result, duration_ms: Date.now() - t0, total_cost_usd: 0.0421, num_turns: 3, session_id: sid,
+      modelUsage: { [model]: { inputTokens: 12, outputTokens: 1840, cacheReadInputTokens: 61400, cacheCreationInputTokens: 5200, costUSD: 0.0421, contextWindow: 1000000 } } })
   }
   await wait(500)
   if (aborted) return done('')
@@ -148,6 +150,14 @@ async function turn(prompt) {
     return done('ok')
   }
   if (/报错|fail/i.test(prompt)) return done('API Error: 529 overloaded (simulated)', true)
+  if (/后台|background/i.test(prompt)) {
+    const dev = startTask('npm run dev', 'local_bash', 40000)
+    await tool('Bash', { command: 'npm run dev', description: 'Start the dev server', run_in_background: true }, `Command running in background with ID: ${dev}.`, { ms: 400 })
+    startTask('Watch the build log for errors', 'monitor', 25000)
+    const text = '开发服务器已经在后台启动，另外挂了一个监视在看构建日志。它们结束时我会再说一声。'
+    say([{ type: 'text', text }])
+    return done(text)
+  }
   if (/\[Attached files/.test(prompt)) {
     // Attachments: say which of the named files are there, and whether their folder was opened with --add-dir.
     const allowed = argv.flatMap((x, i) => (x === '--add-dir' ? [argv[i + 1]] : []))
@@ -212,6 +222,37 @@ async function turn(prompt) {
   done(text)
 }
 
+// ---------- background tasks ----------
+// A prompt that asks for something "in the background" starts one that outlives the turn,
+// as the real CLI does: the process stays up until it ends, then tells the agent.
+const bg = new Map()
+const bgList = () => out({ type: 'system', subtype: 'background_tasks_changed', session_id: sid, tasks: [...bg.values()].map((x) => ({ task_id: x.id, task_type: x.type, description: x.description })) })
+let bgIdle = () => {}
+function startTask(description, type, ms) {
+  const id = 'b' + uuid().slice(0, 8)
+  const x = { id, type, description, timer: setTimeout(() => endTask(id, 'completed'), ms / speed) }
+  bg.set(id, x)
+  bgList()
+  out({ type: 'system', subtype: 'task_started', session_id: sid, task_id: id, description, is_backgrounded: true, task_type: type })
+  return id
+}
+function endTask(id, status) {
+  const x = bg.get(id)
+  if (!x) return
+  clearTimeout(x.timer)
+  bg.delete(id)
+  out({ type: 'system', subtype: 'task_updated', session_id: sid, task_id: id, patch: { status, end_time: Date.now() } })
+  out({ type: 'system', subtype: 'task_notification', session_id: sid, task_id: id, status, summary: `Background command "${x.description}" ${status}` })
+  bgList()
+  if (bg.size === 0) {
+    const text = status === 'killed' ? '后台任务被停掉了。' : `后台任务“${x.description}”跑完了，没有别的在等。`
+    out({ type: 'system', subtype: 'init', session_id: sid, model, cwd, permissionMode: mode, claude_code_version: '2.1.308', tools: [], skills: [] })
+    say([{ type: 'text', text }])
+    out({ type: 'result', subtype: 'success', is_error: false, result: text, duration_ms: 400, total_cost_usd: 0.003, num_turns: 1, session_id: sid })
+    bgIdle()
+  }
+}
+
 const rl = readline.createInterface({ input: process.stdin })
 let running = null
 rl.on('line', (line) => {
@@ -223,6 +264,26 @@ rl.on('line', (line) => {
   }
   if (m.type === 'control_request' && m.request?.subtype === 'initialize') {
     out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response: { commands: COMMANDS, models: MODELS, claude_code_version: '2.1.308' } } })
+  } else if (m.type === 'control_request' && m.request?.subtype === 'get_context_usage') {
+    // Grows with the conversation, like the real thing.
+    const msgs = 4200 + lines.length * 2600
+    const max = 1000000, fixed = 10700 + 21100 + 6000 + 80
+    const cat = (id, name, tokens, kind = 'used') => ({ id, name, tokens, kind, color: 'x' })
+    out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response: {
+      categories: [cat('system_prompt', 'System prompt', 10700), cat('system_tools', 'System tools', 21100), cat('system_tools_deferred', 'System tools (deferred)', 25400, 'deferred'),
+        cat('memory_files', 'Memory files', 80), cat('skills', 'Skills', 6000), cat('messages', 'Messages', msgs), cat('autocompact_buffer', 'Autocompact buffer', 33000, 'buffer'),
+        cat('free_space', 'Free space', max - fixed - msgs - 33000, 'free')],
+      totalTokens: fixed + msgs, maxTokens: max, percentage: Math.round((fixed + msgs) * 100 / max), model, isAutoCompactEnabled: true, autoCompactThreshold: 967000,
+      memoryFiles: [{ path: cwd + '/CLAUDE.md', type: 'Project', tokens: 80 }], skills: { totalSkills: 27, includedSkills: 27, tokens: 6000 },
+      mcpTools: [{ name: 'mcp__docs__read', serverName: 'docs', tokens: 240, isLoaded: false }, { name: 'mcp__docs__write', serverName: 'docs', tokens: 310, isLoaded: true }],
+    } } })
+  } else if (m.type === 'control_request' && m.request?.subtype === 'mcp_status') {
+    out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response: { mcpServers: [{ name: 'docs', status: 'connected', scope: 'user' }, { name: 'tracker', status: 'needs-auth', scope: 'project' }] } } })
+  } else if (m.type === 'control_request' && m.request?.subtype === 'get_settings') {
+    out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response: { effective: {}, applied: { model, effort: effort || 'medium' } } } })
+  } else if (m.type === 'control_request' && m.request?.subtype === 'stop_task') {
+    out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id } })
+    endTask(m.request.task_id, 'killed')
   } else if (m.type === 'control_request' && m.request?.subtype === 'interrupt') {
     aborted = true
     abort()
@@ -241,5 +302,6 @@ rl.on('line', (line) => {
 })
 rl.on('close', async () => {
   if (running) await running
+  if (bg.size) await new Promise((r) => { bgIdle = r })
   process.exit(0)
 })
