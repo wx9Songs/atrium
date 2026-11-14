@@ -102,16 +102,11 @@ func newRunStore(dir string) *RunStore {
 		if json.Unmarshal(b, &r) != nil || r.ID == "" {
 			continue
 		}
-		st := &runState{run: r}
-		if !terminal(r.Status) {
-			st.run.Status = "lost"
-			st.run.Error = "The server restarted and lost track of this run"
-			st.run.ErrorZh = "服务重启时这次运行的状态丢失了"
-			st.run.Perm = nil
-			st.run.Ended = time.Now().UnixMilli()
-			rs.persist(st)
-		}
-		rs.m[r.ID] = st
+		// A run that was in flight when the hub stopped is most likely still going on
+		// its machine: the runner keeps the agent running and holds its events until
+		// the hub is back. It stays as it was, and the runner's next hello settles it
+		// (see reconcileRuns): still there, or gone.
+		rs.m[r.ID] = &runState{run: r}
 		rs.order = append(rs.order, r.ID)
 	}
 	sort.Slice(rs.order, func(i, j int) bool { return rs.m[rs.order[i]].run.Created < rs.m[rs.order[j]].run.Created })

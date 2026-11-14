@@ -466,21 +466,26 @@ func (s *Server) handleRunnerHello(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(raw, &hello)
 	s.mach.setInfo(name, raw)
 	s.reconcileTerms(name, hello.Terms)
-	active := map[string]bool{}
-	for _, id := range hello.Active {
-		active[id] = true
-	}
-	// Runs the hub believes are in flight on this machine but the runner no
-	// longer has (it restarted) cannot finish: close them.
-	for _, run := range s.runs.List(func(x *Run) bool {
-		return x.Machine == name && (x.Status == "starting" || x.Status == "running" || x.Status == "permission")
-	}) {
-		if !active[run.ID] {
-			s.finishRun(run.ID, "lost", bi("这台机器上的后台程序重启了，这次运行被中断", "The runner on this machine restarted and the run was interrupted"))
-		}
-	}
+	s.reconcileRuns(name, hello.Active)
 	s.bus.Publish("machines", s.machineList(r.Context()))
 	writeJSON(w, 200, map[string]any{"ok": true, "machine": name, "version": version})
+}
+
+// reconcileRuns settles, when a machine's runner says hello, the runs the hub
+// believes are in flight there. Those the runner still has go on, also across
+// a restart of the hub. Those it no longer has cannot finish: the runner
+// restarted, or the run ended while the hub was away (then its last events
+// are still on their way, and the exit among them sets the outcome right).
+func (s *Server) reconcileRuns(machine string, activeIDs []string) {
+	active := map[string]bool{}
+	for _, id := range activeIDs {
+		active[id] = true
+	}
+	for _, run := range s.runs.List(func(x *Run) bool { return x.Machine == machine && !terminal(x.Status) }) {
+		if !active[run.ID] {
+			s.finishRun(run.ID, "lost", bi("这次运行中断了：这台机器上的后台程序或服务重启过", "This run was interrupted: the runner on this machine, or the server, restarted"))
+		}
+	}
 }
 
 func (s *Server) handleRunnerPoll(w http.ResponseWriter, r *http.Request) {
@@ -554,7 +559,11 @@ func setRunSession(x *Run, native string) {
 
 func (s *Server) applyRunEvent(machine string, ev inEvent) {
 	run, ok := s.runs.Get(ev.RunID)
-	if !ok || run.Machine != machine || terminal(run.Status) {
+	if !ok || run.Machine != machine {
+		return
+	}
+	// A run closed as lost may still report how it really ended (see reconcileRuns).
+	if terminal(run.Status) && !(run.Status == "lost" && ev.T == "exit") {
 		return
 	}
 	now := time.Now().UnixMilli()

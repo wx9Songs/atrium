@@ -425,11 +425,27 @@ func (r *Runner) proc(id string) *proc {
 	return r.procs[id]
 }
 
+// continues tells whether the job carries on an existing session in place (not a new one, not a copy).
+func (j Job) continues() bool { return !j.IsNew && !j.Fork && j.NativeID != "" }
+
 func (r *Runner) start(job Job) {
 	r.mu.Lock()
 	if _, dup := r.procs[job.ID]; dup {
 		r.mu.Unlock()
 		return
+	}
+	// Two agents continuing one session at once would write over each other and
+	// do the work twice. The hub does not ask for that; this is the last line of
+	// defence for when it has lost track of a run that is still going on here.
+	if job.continues() {
+		for _, x := range r.procs {
+			if x.job.continues() && x.job.Agent == job.Agent && x.job.NativeID == job.NativeID {
+				r.mu.Unlock()
+				zh, en := both(bi("这个会话在这台机器上还在运行，等它结束或先停止它", "This session is still running on this machine. Wait for it to finish or stop it first"))
+				r.emit(job.ID, "exit", map[string]any{"stopped": false, "error_zh": zh, "error": en})
+				return
+			}
+		}
 	}
 	p := &proc{r: r, job: job, pending: map[string]pendingPerm{}}
 	r.procs[job.ID] = p
