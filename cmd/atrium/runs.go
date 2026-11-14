@@ -106,7 +106,16 @@ func newRunStore(dir string) *RunStore {
 		// its machine: the runner keeps the agent running and holds its events until
 		// the hub is back. It stays as it was, and the runner's next hello settles it
 		// (see reconcileRuns): still there, or gone.
-		rs.m[r.ID] = &runState{run: r}
+		st := &runState{run: r}
+		if r.Status == "queued" {
+			// Its start command was waiting in the hub's memory and went with it.
+			st.run.Status = "lost"
+			st.run.Error = "The server restarted before this run reached its machine"
+			st.run.ErrorZh = "服务重启时这次运行还没有发到那台机器上"
+			st.run.Ended = time.Now().UnixMilli()
+			rs.persist(st)
+		}
+		rs.m[r.ID] = st
 		rs.order = append(rs.order, r.ID)
 	}
 	sort.Slice(rs.order, func(i, j int) bool { return rs.m[rs.order[i]].run.Created < rs.m[rs.order[j]].run.Created })

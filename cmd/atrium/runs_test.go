@@ -17,12 +17,21 @@ func TestRunsAcrossRestart(t *testing.T) {
 		first.runs.Create(Run{ID: id, Machine: "m1", SessionID: "s-" + id, Status: "running"})
 	}
 	first.finishRun("done", "done", nil)
+	first.runs.Create(Run{ID: "waiting", Machine: "m1", SessionID: "s-waiting", Status: "queued"})
+	// A hello must not close a run whose start command the runner has not picked up yet.
+	first.reconcileRuns("m1", []string{"kept", "gone", "ended"})
+	if run, _ := first.runs.Get("waiting"); run.Status != "queued" {
+		t.Fatalf("a hello closed a queued run: %q", run.Status)
+	}
 
 	s := newServer(cfg) // the hub restarts
 	for _, id := range []string{"kept", "gone", "ended"} {
 		if run, _ := s.runs.Get(id); run.Status != "running" {
 			t.Fatalf("%s after the restart: %q, want it still running", id, run.Status)
 		}
+	}
+	if run, _ := s.runs.Get("waiting"); run.Status != "lost" {
+		t.Fatalf("a queued run after the restart: %q, want lost (its command is gone)", run.Status)
 	}
 	s.reconcileRuns("other", nil)
 	if run, _ := s.runs.Get("gone"); run.Status != "running" {

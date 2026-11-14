@@ -481,7 +481,11 @@ func (s *Server) reconcileRuns(machine string, activeIDs []string) {
 	for _, id := range activeIDs {
 		active[id] = true
 	}
-	for _, run := range s.runs.List(func(x *Run) bool { return x.Machine == machine && !terminal(x.Status) }) {
+	// A queued run is not the runner's yet: its start command is still waiting in
+	// the hub (or on its way), so the runner not listing it means nothing.
+	for _, run := range s.runs.List(func(x *Run) bool {
+		return x.Machine == machine && !terminal(x.Status) && x.Status != "queued"
+	}) {
 		if !active[run.ID] {
 			s.finishRun(run.ID, "lost", bi("这次运行中断了：这台机器上的后台程序或服务重启过", "This run was interrupted: the runner on this machine, or the server, restarted"))
 		}
