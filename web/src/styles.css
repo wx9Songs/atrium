@@ -923,3 +923,12 @@ button.att.pic { cursor: zoom-in; }
 .task-main b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-main span { font-size: 12px; color: var(--text-3); }
 .task .btn.sm { height: 26px; padding: 0 10px; font-size: 12.5px; }
+
+/* the side panel's left edge can be dragged */
+.pane-grip { position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; z-index: 5; cursor: col-resize; touch-action: none; }
+.pane-grip::after { content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: var(--accent); opacity: 0; transition: opacity 0.12s; }
+.pane-grip:hover::after, .pane-grip.on::after { opacity: 0.55; }
+body.resizing, body.resizing * { cursor: col-resize !important; user-select: none !important; -webkit-user-select: none !important; }
+@media (min-width: 1181px) { .pane { position: relative; } .pane.sized { width: clamp(320px, var(--pane-w), max(320px, calc(100% - 430px))); } }
+@media (min-width: 821px) and (max-width: 1180px) { .pane.sized { width: min(var(--pane-w), 100%); } }
+@media (max-width: 820px) { .pane-grip { display: none; } }

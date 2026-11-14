@@ -1,6 +1,6 @@
 // The panel to the right of a conversation: the session's info, side chats, a terminal on the
 // session's machine, and its files.
-import { lazy, Suspense, useMemo } from 'react'
+import { CSSProperties, lazy, PointerEvent as RPointerEvent, Suspense, useMemo, useRef, useState } from 'react'
 import { Machine, Session } from './api'
 import { Composer, RunPrefs } from './Composer'
 import { allSessions, resolveKey } from './derive'
@@ -33,9 +33,40 @@ export function SidePane({
   onOpen: (key: string) => void
 }) {
   const [wide, setWide] = usePersisted('atrium.pane.wide', false)
+  // A width set by dragging the panel's left edge (0 = not set: the two sizes of the button above).
+  const [width, setWidth] = usePersisted('atrium.pane.w', 0)
+  const [drag, setDrag] = useState(0) // the width while dragging
+  const el = useRef<HTMLElement>(null)
+  const startDrag = (e: RPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || !el.current) return
+    e.preventDefault()
+    const right = el.current.getBoundingClientRect().right
+    const all = el.current.parentElement?.clientWidth || window.innerWidth
+    const room = getComputedStyle(el.current).position === 'absolute' ? all : all - 430 // floating over the conversation, or beside it (which keeps 430px)
+    const at = (x: number) => Math.round(Math.max(320, Math.min(right - x, Math.max(320, room))))
+    let w = at(e.clientX)
+    const move = (ev: PointerEvent) => { w = at(ev.clientX); setDrag(w) }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      document.body.classList.remove('resizing')
+      setDrag(0)
+      setWidth(w)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+    document.body.classList.add('resizing')
+    setDrag(w)
+  }
+  const w = drag || width
+  const roomy = w ? w >= 700 : wide // enough for the files tab to show its tree next to a file
   const tabs: [Pane, string, string][] = [['info', 'list', t('信息', 'Info')], ['side', 'sidechat', t('边聊', 'Side chat')], ['terminal', 'terminal', t('终端', 'Terminal')], ['files', 'folder', t('文件', 'Files')]]
   return (
-    <aside className={'pane' + (wide ? ' wide' : '')}>
+    <aside ref={el} className={'pane' + (w ? ' sized' : wide ? ' wide' : '')} style={w ? ({ '--pane-w': w + 'px' } as CSSProperties) : undefined}>
+      <div className={'pane-grip' + (drag ? ' on' : '')} onPointerDown={startDrag} onDoubleClick={() => setWidth(0)}
+        title={t('拖动调整宽度，双击恢复', 'Drag to resize, double-click to reset')} />
       <div className="pane-head" data-drag>
         <div className="tabs">
           {tabs.map(([k, icon, label]) => (
@@ -43,7 +74,7 @@ export function SidePane({
           ))}
         </div>
         <span className="grow" />
-        <button className="iconbtn" onClick={() => setWide(!wide)} title={wide ? t('收窄面板', 'Narrow the panel') : t('加宽面板', 'Widen the panel')}><Icon name={wide ? 'narrow' : 'widen'} size={16} /></button>
+        <button className="iconbtn" onClick={() => { setWide(!roomy); setWidth(0) }} title={roomy ? t('收窄面板', 'Narrow the panel') : t('加宽面板', 'Widen the panel')}><Icon name={roomy ? 'narrow' : 'widen'} size={16} /></button>
         <button className="iconbtn" onClick={() => setTab('')} title={t('关闭面板', 'Close panel')}><Icon name="x" size={16} /></button>
       </div>
       {tab === 'info' ? (
@@ -57,7 +88,7 @@ export function SidePane({
           <TerminalView session={session} machine={machine} />
         </Suspense>
       ) : (
-        <Files session={session} machine={machine} wide={wide} onShowTerminal={() => setTab('terminal')} />
+        <Files session={session} machine={machine} wide={roomy} onShowTerminal={() => setTab('terminal')} />
       )}
     </aside>
   )
