@@ -254,6 +254,7 @@ function connect() {
   es = new EventSource('/api/events')
   es.addEventListener('hello', () => {
     set({ connected: true })
+    tellPresence()
     if (everConnected) {
       // we may have missed events while disconnected
       refreshSessions().then(() => {
@@ -313,6 +314,46 @@ function connect() {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.authed) { refreshSessions(); refreshUsage() }
 })
+
+// ---------- presence ----------
+// The hub can send a notification (to a phone, say) when a run needs attention.
+// It holds back while a page is in front of someone, so each page says when it
+// is: visible, focused and used in the last few minutes.
+
+const pageId = Math.random().toString(36).slice(2) + Date.now().toString(36)
+let focused = document.hasFocus()
+let lastInput = Date.now()
+let toldWatching = false
+
+function watching() {
+  return document.visibilityState === 'visible' && focused && Date.now() - lastInput < 5 * 60_000
+}
+
+function tellPresence(gone = false) {
+  const w = !gone && watching()
+  if (!state.authed || (!w && !toldWatching)) return
+  toldWatching = w
+  fetch('/api/presence', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: pageId, watching: w }),
+    credentials: 'same-origin',
+    keepalive: true,
+  }).catch(() => {})
+}
+
+function noteInput(e: Event) {
+  const was = watching()
+  lastInput = Date.now()
+  if (e.type !== 'wheel' && e.type !== 'pointermove') focused = true // typing or clicking here means it has the focus
+  if (!was) tellPresence()
+}
+for (const ev of ['pointerdown', 'keydown', 'touchstart', 'wheel', 'pointermove']) window.addEventListener(ev, noteInput, { passive: true, capture: true })
+window.addEventListener('focus', () => { focused = true; tellPresence() })
+window.addEventListener('blur', () => { focused = false; tellPresence() })
+window.addEventListener('pagehide', () => tellPresence(true))
+document.addEventListener('visibilitychange', () => tellPresence())
+window.setInterval(() => tellPresence(), 30_000)
 
 /**
  * Where the start page should open next: set by "new session here" on a machine

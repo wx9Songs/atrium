@@ -192,6 +192,18 @@ func (a *Archive) Sessions(ctx context.Context, force bool) ([]Session, string, 
 	return all, etag, nil
 }
 
+// knownTitle is the session's title if the list in memory has it; it never asks the archive.
+func (a *Archive) knownTitle(id string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, s := range a.cache {
+		if s.ID == id {
+			return s.Title
+		}
+	}
+	return ""
+}
+
 func (a *Archive) Find(ctx context.Context, id string) (Session, bool) {
 	for _, force := range []bool{false, true} {
 		list, _, err := a.Sessions(ctx, force)

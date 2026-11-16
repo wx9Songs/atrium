@@ -189,6 +189,28 @@ xattr -dr com.apple.quarantine /Applications/Atrium.app
 
 To build it yourself: `make app`. See [app/README.md](app/README.md).
 
+## Notifications on your phone
+
+The hub can run a command of yours when a run needs your OK, has answered, or failed. Anything that can send you a message works: a chat app's CLI, `curl` to ntfy or Bark, a mail command. Add a `notify` block to the hub's `config.json` and restart the hub:
+
+```json
+"notify": {
+  "command": ["lark-cli", "im", "+messages-send", "--as", "bot", "--user-id", "ou_xxx", "--text", "{text}"],
+  "url": "https://atrium.example.com"
+}
+```
+
+- `command` runs without a shell. `{text}` is the whole message: what happened, the session's title, the machine, a line of detail, the link. `{head}`, `{title}`, `{detail}`, `{kind}`, `{machine}` and `{url}` are its parts. The same values are in the environment (`ATRIUM_TEXT` and so on), and the message is on standard input, so `["curl", "-s", "--data-binary", "@-", "https://ntfy.sh/your-topic"]` works too.
+- `url` is the page's address as your phone reaches it; the message then ends with a link to the session.
+- `on` picks what to tell about: any of `"permission"`, `"done"`, `"error"`. Leave it out for all three.
+- `lang` is `"en"` or `"zh"`.
+- `replies` lets you answer from where the notification arrived. It is a command that keeps running and prints what you write back, one JSON object per line: `{"text": "1"}`. A permission request then says "Reply 1 to allow, 2 to deny", a question lists its options by number, and your reply answers the latest request still waiting. Make sure the command passes on only your own messages: whoever can write to it can approve what your agents ask for. For Feishu/Lark: `["lark-cli", "event", "consume", "im.message.receive_v1", "--as", "bot", "--jq", "select(.chat_type == \"p2p\" and .sender_id == \"ou_xxx\") | {id: .message_id, text: .content}"]`.
+- Nothing is sent while an Atrium page is in front of you: visible, focused, and used in the last five minutes. `"always": true` sends anyway.
+
+The hub's systemd unit from the setup guide keeps it off the network, so a command that calls a service fails there. [scripts/notify-feishu.sh](scripts/notify-feishu.sh) is a small separate service for that case: the hub leaves messages in a folder, the script sends them and writes your replies back.
+
+`atrium notify-test` sends a test message. Mind that a message carries the session's title and the first lines of the agent's reply through whatever service your command uses.
+
 ## Things to know
 
 - **One writer per session.** If a session is running in a terminal or desktop client, stop it there before sending from Atrium, or the two will interleave in one transcript. Atrium warns when a session changed elsewhere moments ago.

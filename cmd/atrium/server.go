@@ -34,7 +34,8 @@ type Server struct {
 	terms *Terms
 	bus   *Bus
 
-	usage usageCache
+	notify *notifier
+	usage  usageCache
 
 	blobs    blobStore
 	loginMu  sync.Mutex
@@ -50,6 +51,8 @@ func newServer(cfg *Config) *Server {
 		mach:  newMachines(cfg, filepath.Join(cfg.dataDir(), "caps.json")),
 		bus:   newBus(),
 		terms: newTerms(),
+
+		notify: newNotifier(cfg.Notify),
 	}
 	return s
 }
@@ -78,6 +81,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/runs/{id}/stop", b(s.handleStop))
 	mux.HandleFunc("POST /api/runs/{id}/stop-task", b(s.handleStopTask))
 	mux.HandleFunc("GET /api/session-info", b(s.handleSessionInfo))
+	mux.HandleFunc("POST /api/presence", b(s.handlePresence))
 	mux.HandleFunc("POST /api/ls", b(s.handleLs))
 	mux.HandleFunc("POST /api/machines/{name}/caps", b(s.handleCapsRefresh))
 	mux.HandleFunc("GET /api/terms", b(s.handleTermList))

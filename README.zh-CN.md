@@ -189,6 +189,29 @@ xattr -dr com.apple.quarantine /Applications/Atrium.app
 
 想自己构建：`make app`。见 [app/README.md](app/README.md)。
 
+## 手机通知
+
+当一次运行需要你确认、已经回复或者出错时，hub 可以执行一条你指定的命令。能给你发消息的工具都行：聊天软件的命令行、用 `curl` 调 ntfy 或 Bark、发邮件的命令。在 hub 的 `config.json` 里加一段 `notify`，然后重启 hub：
+
+```json
+"notify": {
+  "command": ["lark-cli", "im", "+messages-send", "--as", "bot", "--user-id", "ou_xxx", "--text", "{text}"],
+  "url": "https://atrium.example.com",
+  "lang": "zh"
+}
+```
+
+- `command` 不经过 shell 直接执行。`{text}` 是整条消息：发生了什么、会话标题、机器、一行详情、链接。`{head}`、`{title}`、`{detail}`、`{kind}`、`{machine}`、`{url}` 是其中各部分。同样的值也在环境变量里（`ATRIUM_TEXT` 等），整条消息还会写到标准输入，所以 `["curl", "-s", "--data-binary", "@-", "https://ntfy.sh/your-topic"]` 也可以。
+- `url` 是手机访问这个页面的地址，填了之后消息末尾带上会话链接。
+- `on` 选择通知哪些情况：`"permission"`、`"done"`、`"error"` 中的若干个，不写就是全部。
+- `lang` 是 `"en"` 或 `"zh"`。
+- `replies` 让你在收到通知的地方直接回答。它是一条一直运行的命令，把你回复的内容逐行打印成 JSON：`{"text": "1"}`。这样权限请求会写明“回复 1 允许，2 拒绝”，提问会按编号列出选项，你的回复用来回答最新一个还在等待的请求。务必让这条命令只转交你本人的消息：谁能往里写，谁就能批准 agent 的请求。飞书的写法：`["lark-cli", "event", "consume", "im.message.receive_v1", "--as", "bot", "--jq", "select(.chat_type == \"p2p\" and .sender_id == \"ou_xxx\") | {id: .message_id, text: .content}"]`。
+- 你正看着 Atrium 页面时不发：页面可见、在前台，并且五分钟内操作过。`"always": true` 则照发不误。
+
+安装向导里 hub 的 systemd 单元不允许它访问外网，所以在那里直接调用外部服务的命令会失败。[scripts/notify-feishu.sh](scripts/notify-feishu.sh) 是为这种情况准备的一个独立小服务：hub 把消息放进一个目录，脚本负责发出去，并把你的回复写回来。
+
+`atrium notify-test` 发一条测试消息。注意消息里有会话标题和 agent 回复的开头几句，它们会经过你的命令所用的那个服务。
+
 ## 需要知道的
 
 - **一个会话同一时间只能有一处在写。** 如果它正在终端或桌面客户端里运行，先停掉那边再从 Atrium 发，否则两边的内容会交错写进同一份记录。检测到会话刚在别处更新时，页面会提醒。

@@ -33,6 +33,9 @@ type Config struct {
 	// "local" is everything on one computer (scripts/local-install.sh), empty
 	// is a server that machines connect to.
 	Mode string `json:"mode,omitempty"`
+	// Notify tells you, through a command of your choosing, about runs that need
+	// you while no page is open in front of you (see notify.go).
+	Notify *NotifyConf `json:"notify,omitempty"`
 
 	path string
 }

@@ -367,15 +367,7 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad request")
 		return
 	}
-	if run.Perm == nil || run.Perm.RequestID != body.RequestID {
-		writeErr(w, http.StatusConflict, L(r, "这个请求已经处理过了", "This request was already answered"))
-		return
-	}
-	err := s.mach.enqueue(run.Machine, map[string]any{
-		"id": "c" + randToken(9), "type": "permission", "run_id": run.ID, "request_id": body.RequestID,
-		"behavior": body.Behavior, "message": body.Message, "always": body.Always, "input": body.Input,
-	})
-	if err != nil {
+	if err := s.answerPermission(run, body.RequestID, body.Behavior, body.Message, body.Always, body.Input); err != nil {
 		writeErr(w, http.StatusConflict, errText(r, err))
 		return
 	}
@@ -414,7 +406,9 @@ func (s *Server) finishRun(id, status string, cause error) {
 		zh, en = both(cause)
 	}
 	data, _ := json.Marshal(map[string]any{"error": en, "error_zh": zh, "by": "hub"})
+	var prev Run
 	run, ev, ok := s.runs.Append(id, "exit", now, data, func(x *Run) {
+		prev = *x
 		if terminal(x.Status) {
 			return
 		}
@@ -422,6 +416,7 @@ func (s *Server) finishRun(id, status string, cause error) {
 	})
 	if ok {
 		s.bus.Publish("run", map[string]any{"run": run, "event": ev})
+		s.attention(prev, run)
 	}
 }
 
@@ -707,6 +702,7 @@ func (s *Server) applyRunEvent(machine string, ev inEvent) {
 			}
 		}
 	}
+	prev := run
 	run, e, ok := s.runs.Append(ev.RunID, ev.T, ev.TS, ev.Data, mutate)
 	if ok {
 		s.noteFork(run)
@@ -714,6 +710,7 @@ func (s *Server) applyRunEvent(machine string, ev inEvent) {
 			s.noteRewind(run, ev.Data)
 		}
 		s.bus.Publish("run", map[string]any{"run": run, "event": e})
+		s.attention(prev, run)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -32,6 +33,7 @@ func usage() {
   atrium add-machine [--config FILE] [--label TEXT] NAME
                                                 register a machine, print its runner token once
   atrium login-link  [--config FILE] --base URL print a one-time sign-in link (valid 15 min)
+  atrium notify-test [--config FILE]            send a test notification with the config's "notify" command
   atrium version
 `, version)
 	os.Exit(2)
@@ -144,6 +146,26 @@ func main() {
 			log.Fatal(err)
 		}
 		fmt.Printf("%s/#login=%s\n", trimSlash(*base), code)
+	case "notify-test":
+		fs.Parse(args)
+		cfg, err := loadConfig(*cfgPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		s := &Server{cfg: cfg, meta: newMetaStore(""), notify: &notifier{conf: cfg.Notify}}
+		if !s.notify.on() {
+			log.Fatalf(`%s has no "notify" command`, *cfgPath)
+		}
+		x := s.noteFor("test", Run{Title: "Atrium", Machine: "test", Error: "This is a test.", ErrorZh: "这是一条测试消息。"})
+		x.Head = "Test"
+		x.Text = strings.Replace(x.Text, "Run failed", x.Head, 1)
+		x.Text = strings.Replace(x.Text, "运行出错", x.Head, 1)
+		out, err := s.notify.run(x)
+		fmt.Print(out)
+		if err != nil {
+			log.Fatalf("the command failed: %v", err)
+		}
+		fmt.Println("sent:", strings.ReplaceAll(x.Text, "\n", " / "))
 	case "version":
 		fmt.Println(version)
 	default:
@@ -171,6 +193,7 @@ func serve(cfg *Config) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go s.background(ctx)
+	go s.listen(ctx)
 	go func() {
 		<-ctx.Done()
 		sh, cancel := context.WithTimeout(context.Background(), 3*time.Second)
