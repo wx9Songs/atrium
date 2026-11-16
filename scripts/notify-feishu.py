@@ -38,6 +38,7 @@ OUT, REPLIES = os.path.join(DIR, "out"), os.path.join(DIR, "replies")
 
 lock = threading.Lock()
 cards = {}    # request id -> the card as sent, to redraw once it is answered
+sent = {}     # message id -> request id, for a form (its button cannot say which)
 pressed = {}  # request id -> the label of the button pressed
 buttons = threading.Event()  # set once the app receives card callbacks
 
@@ -46,10 +47,10 @@ def log(*a):
     print("notify-feishu:", *a, file=sys.stderr, flush=True)
 
 
-def lark(*args):
+def lark(*args, full=False):
     try:
         r = subprocess.run([LARK, *args], capture_output=True, text=True, timeout=40)
-        return r.returncode == 0, (r.stdout + r.stderr)[-400:]
+        return r.returncode == 0, r.stdout if full and r.returncode == 0 else (r.stdout + r.stderr)[-400:]
     except Exception as e:  # a timeout, or lark-cli missing
         return False, str(e)
 
@@ -71,12 +72,44 @@ def card(n, answered=""):
     row = []
     if answered:
         body.append({"tag": "markdown", "content": ("已选择：" if zh(n) else "Chosen: ") + "**" + answered + "**"})
-    elif n.get("choices") and buttons.is_set():
-        for c in n["choices"]:
+    elif n.get("request") and buttons.is_set() and n.get("questions") and not n.get("choices"):
+        # Several questions, or several options at once: a form, one part per
+        # question, each with its options and room for an answer in one's own words.
+        many = len(n["questions"]) > 1
+        els = []
+        for i, q in enumerate(n["questions"]):
+            if many:
+                els.append({"tag": "markdown", "content": "**%d. %s**" % (i + 1, q["question"])})
+            if q.get("options"):
+                els.append({
+                    "tag": "multi_select_static" if q.get("multi") else "select_static", "name": "q%d" % i, "width": "fill",
+                    "placeholder": {"tag": "plain_text", "content": ("请选择（可多选）" if q.get("multi") else "请选择") if zh(n) else ("Choose (several allowed)" if q.get("multi") else "Choose")},
+                    "options": [{"text": {"tag": "plain_text", "content": o}, "value": o} for o in q["options"]],
+                })
+            els.append({
+                "tag": "input", "name": "o%d" % i, "width": "fill",
+                "placeholder": {"tag": "plain_text", "content": "其他：自己填写（填了以这里为准）" if zh(n) else "Other: your own answer (wins if filled in)"},
+            })
+        els.append({
+            "tag": "button", "name": "submit", "type": "primary_filled", "form_action_type": "submit",
+            "text": {"tag": "plain_text", "content": "提交" if zh(n) else "Submit"},
+        })
+        body.append({"tag": "form", "name": "answers", "elements": els})
+    elif n.get("request") and buttons.is_set():
+        for c in n.get("choices") or []:
             row.append({
                 "tag": "button", "text": {"tag": "plain_text", "content": c["label"]},
                 "type": {"primary": "primary_filled", "danger": "danger"}.get(c.get("style"), "default"),
                 "behaviors": [{"type": "callback", "value": {"atrium": n["request"], "reply": c["reply"], "label": c["label"]}}],
+            })
+        if n.get("free"):
+            # An answer in one's own words; where there are no buttons (several
+            # questions, several options at once), also the numbers.
+            hint = ("其他：写下你的回答" if zh(n) else "Other: write your answer") if row else n.get("hint", "")
+            body.append({
+                "tag": "input", "name": "answer", "width": "fill",
+                "placeholder": {"tag": "plain_text", "content": hint[:100]},
+                "behaviors": [{"type": "callback", "value": {"atrium": n["request"]}}],
             })
     elif n.get("hint"):
         body.append({"tag": "markdown", "content": "<font color='grey'>" + n["hint"] + "</font>"})
@@ -122,9 +155,15 @@ def send(raw):
     else:
         c = card(n)
         ok, out = lark("im", "+messages-send", "--as", "bot", "--user-id", WHO, "--msg-type", "interactive",
-                       "--content", json.dumps(c, ensure_ascii=False))
+                       "--content", json.dumps(c, ensure_ascii=False), full=True)
         if ok and req:
             with lock:
+                try:
+                    sent[json.loads(out[out.index("{"):])["data"]["message_id"]] = req
+                except Exception:
+                    pass
+                for old in list(sent)[:-100]:
+                    sent.pop(old, None)
                 cards[req] = n
                 for old in list(cards)[:-100]:
                     cards.pop(old, None)
@@ -160,13 +199,33 @@ def on_message(m):
 def on_button(m):
     v = m.get("value") or {}
     req = v.get("atrium")
-    if not req or "reply" not in v:
+    text = v.get("reply") if m.get("tag") == "button" else (m.get("input") or "").strip()
+    if m.get("form"):
+        # A form: one line per question, what was written winning over what was chosen.
+        with lock:
+            req = sent.get(m.get("message"))
+            n = cards.get(req) or {}
+        form, lines = json.loads(m["form"]), []
+        for i, q in enumerate(n.get("questions") or []):
+            picked = form.get("q%d" % i) or ""
+            if isinstance(picked, list):
+                picked = ", ".join(picked)
+            own = " ".join((form.get("o%d" % i) or "").split()).replace(";", ",").replace("；", "，")
+            lines.append(own or picked)
+        if not req or not lines:
+            return
+        if not all(lines):
+            lark("im", "+messages-send", "--as", "bot", "--user-id", WHO, "--text",
+                 "还有问题没有回答，请填完再提交。" if zh(n) else "Some questions have no answer yet; fill them in and submit again.")
+            return
+        text, v = "\n".join(lines), {"label": " / ".join(lines)}
+    if not req or not text:
         return
     with lock:
         again = req in pressed
-        pressed.setdefault(req, v.get("label", ""))
+        pressed.setdefault(req, v.get("label") or text)
         n = cards.get(req)
-    write_reply({"id": m.get("id", ""), "text": v["reply"], "request": req})
+    write_reply({"id": m.get("id", ""), "text": text, "request": req})
     if n and not again and m.get("token"):
         ok, out = lark("api", "POST", "/open-apis/interactive/v1/card/update", "--as", "bot",
                        "--data", json.dumps({"token": m["token"], "card": card(n, pressed[req])}, ensure_ascii=False))
@@ -192,7 +251,7 @@ def watch_callbacks():
     buttons.set()
     log("card buttons are on")
     consume("card.action.trigger",
-            'select(.operator_id == "%s" and .action_tag == "button") | {id: .event_id, token: .token, value: (.action_value | fromjson?)}' % WHO,
+            'select(.operator_id == "%s" and (.action_tag == "button" or .action_tag == "input")) | {id: .event_id, token: .token, tag: .action_tag, input: .input_value, form: .form_value, message: .message_id, value: (.action_value | fromjson?)}' % WHO,
             on_button)
 
 

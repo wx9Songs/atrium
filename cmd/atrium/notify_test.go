@@ -195,7 +195,7 @@ func TestReply(t *testing.T) {
 	// A question: options by number, or an answer in your own words.
 	q := `{"request_id":"%s","tool_name":"AskUserQuestion","input":{"questions":[{"question":"Which database?","options":[{"label":"Postgres","description":"what we run"},{"label":"SQLite"}]},{"question":"Which parts?","multiSelect":true,"options":[{"label":"API"},{"label":"Page"},{"label":"Docs"}]}]}}`
 	ev("a", "permission", strings.Replace(q, "%s", "q1", 1))
-	want := "需要你回答 · Build（m1）\n问题 1: Which database?\n  1. Postgres — what we run\n  2. SQLite\n问题 2: Which parts?\n  1. API\n  2. Page\n  3. Docs\n回复选项的编号，或者直接写你的回答；每个问题一行。回复 0 跳过。"
+	want := "需要你回答 · Build（m1）\n问题 1: Which database?\n  1. Postgres — what we run\n  2. SQLite\n问题 2: Which parts?\n  1. API\n  2. Page\n  3. Docs\n回复选项的编号，或者直接写你的回答；每个问题一行，或用分号隔开。回复 0 跳过。"
 	if got := said(); got != want {
 		t.Fatalf("a question:\n got %q\nwant %q", got, want)
 	}
@@ -276,6 +276,10 @@ func TestReplyByButton(t *testing.T) {
 	s.reply("2", "r1") // pressed again
 	if x := <-n.q; x.OK || x.Text != "This request was already answered" || len(cmds()) != 0 {
 		t.Fatalf("pressed again: %+v", x)
+	}
+	s.reply("1", "someone-elses") // a request this hub never asked about: not a word
+	if len(n.q) != 0 || len(cmds()) != 0 {
+		t.Fatal("answered a request that is not this hub's")
 	}
 	s.reply("2", "r2")
 	if c := cmds(); len(c) != 1 || c[0] != "r2 allow" {

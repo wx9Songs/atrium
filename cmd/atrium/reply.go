@@ -99,7 +99,7 @@ func replyHint(p *PermReq, zh bool) string {
 	if qs := questionsOf(p); len(qs) > 0 {
 		h := pick("回复选项的编号，或者直接写你的回答", "Reply with the number of an option, or write your own answer")
 		if len(qs) > 1 {
-			h += pick("；每个问题一行", ", one line per question")
+			h += pick("；每个问题一行，或用分号隔开", ", one line per question or separated by semicolons")
 		}
 		return h + pick("。回复 0 跳过。", ". Reply 0 to skip.")
 	}
@@ -186,6 +186,17 @@ func (s *Server) waiting() (Run, bool) {
 	return Run{}, false
 }
 
+func (n *notifier) wasAnswered(request string) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, r := range n.answered {
+		if r == request {
+			return true
+		}
+	}
+	return false
+}
+
 func (n *notifier) isAsked(request string) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -200,6 +211,10 @@ func (n *notifier) isAsked(request string) bool {
 func (n *notifier) forget(request string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	n.answered = append(n.answered, request)
+	if len(n.answered) > 100 {
+		n.answered = n.answered[len(n.answered)-100:]
+	}
 	for i, a := range n.asked {
 		if a.request == request {
 			n.asked = append(n.asked[:i], n.asked[i+1:]...)
@@ -246,7 +261,11 @@ func (s *Server) reply(text, request string) {
 			run, ok = x, n.isAsked(request)
 		}
 		if !ok {
-			say(pick("这个请求已经处理过了", "This request was already answered"), nil)
+			// One this hub answered a moment ago says so; one it never asked about
+			// belongs to someone else (another hub behind the same bot).
+			if n.wasAnswered(request) {
+				say(pick("这个请求已经处理过了", "This request was already answered"), nil)
+			}
 			return
 		}
 	} else if run, ok = s.waiting(); !ok {

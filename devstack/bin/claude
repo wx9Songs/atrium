@@ -152,6 +152,22 @@ async function turn(prompt) {
     return done('ok')
   }
   if (/报错|fail/i.test(prompt)) return done('API Error: 529 overloaded (simulated)', true)
+  if (/问我|ask me/i.test(prompt)) {
+    // A question: one with a few options, several options at once ("多选", "multi"), or two questions ("两个", "two").
+    const multi = /多选|multi/i.test(prompt)
+    const questions = [{ question: '部署到哪个环境？', header: '环境', multiSelect: multi, options: [{ label: '测试环境', description: '先在这里跑一遍' }, { label: '预发环境', description: '和线上同配置' }, { label: '线上', description: '直接发布' }] }]
+    if (/两个|two/i.test(prompt)) questions.push({ question: '什么时候开始？', header: '时间', multiSelect: false, options: [{ label: '现在' }, { label: '今晚' }] })
+    const id = 'toolu_' + uuid().slice(0, 10) + n++
+    say([{ type: 'tool_use', id, name: 'AskUserQuestion', input: { questions } }])
+    const rid = 'perm_' + uuid().slice(0, 8)
+    out({ type: 'control_request', request_id: rid, request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions } } })
+    const ans = await new Promise((res) => pending.set(rid, res))
+    if (aborted) return
+    const got = ans.behavior === 'allow' ? questions.map((q) => `${q.header}：${ans.updatedInput?.answers?.[q.question] ?? '（没有回答）'}`).join('；') : '你跳过了这个问题'
+    const text = `收到你的回答。${got}。`
+    say([{ type: 'text', text }])
+    return done(text)
+  }
   if (/后台|background/i.test(prompt)) {
     const dev = startTask('npm run dev', 'local_bash', 40000)
     await tool('Bash', { command: 'npm run dev', description: 'Start the dev server', run_in_background: true }, `Command running in background with ID: ${dev}.`, { ms: 400 })

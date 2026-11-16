@@ -54,7 +54,17 @@ type note struct {
 	Request string   `json:"request,omitempty"`
 	Choices []choice `json:"choices,omitempty"`
 	Hint    string   `json:"hint,omitempty"`
-	OK      bool     `json:"ok,omitempty"` // reply: the answer went through
+	Free    bool     `json:"free,omitempty"` // an answer in one's own words is taken too (a question)
+	// The questions asked, for a command that draws a form. Its answers come
+	// back as a reply of one line per question: option labels or own words.
+	Questions []noteQuestion `json:"questions,omitempty"`
+	OK        bool           `json:"ok,omitempty"` // reply: the answer went through
+}
+
+type noteQuestion struct {
+	Question string   `json:"question"`
+	Options  []string `json:"options"`
+	Multi    bool     `json:"multi,omitempty"`
 }
 
 // A page counts as watched for this long after it last said so; it says so
@@ -68,6 +78,7 @@ type notifier struct {
 	mu       sync.Mutex
 	watching map[string]time.Time // page id → when it last said it is being watched
 	asked    []asked              // permission requests told about, oldest first
+	answered []string             // the last requests answered from a notification
 }
 
 func newNotifier(conf *NotifyConf) *notifier {
@@ -223,6 +234,14 @@ func (s *Server) noteFor(kind string, run Run) note {
 		x.Detail = askText(run.Perm, zh)
 		if run.Perm != nil && len(s.notify.conf.Replies) > 0 {
 			x.Request, x.Choices, x.Hint = run.Perm.RequestID, choicesOf(run.Perm, zh), replyHint(run.Perm, zh)
+			for _, q := range questionsOf(run.Perm) {
+				nq := noteQuestion{Question: clip(q.Question, 300), Multi: q.MultiSelect, Options: []string{}}
+				for _, o := range q.Options {
+					nq.Options = append(nq.Options, o.Label)
+				}
+				x.Questions = append(x.Questions, nq)
+			}
+			x.Free = len(x.Questions) > 0
 		}
 	case "done":
 		x.Head = pick("已完成", "Done")
