@@ -932,3 +932,6 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 @media (min-width: 1181px) { .pane { position: relative; } .pane.sized { width: clamp(320px, var(--pane-w), max(320px, calc(100% - 430px))); } }
 @media (min-width: 821px) and (max-width: 1180px) { .pane.sized { width: min(var(--pane-w), 100%); } }
 @media (max-width: 820px) { .pane-grip { display: none; } }
+
+.running-line.quiet { color: var(--text-3); font-size: 13px; }
+.running-line.quiet .linkbtn { margin-left: 2px; }

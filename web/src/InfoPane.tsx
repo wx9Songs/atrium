@@ -190,7 +190,7 @@ export function InfoPane({ session, machine }: { session: Session; machine?: Mac
           </div>
         )}
         {active && running.length > 0 && run?.status !== 'permission' && (
-          <div className="info-note">{t('后台任务还在跑，这一轮要等它们结束才算完成；可以在这里停掉。', 'With background tasks still going, this turn is not over until they end. You can stop them here.')}</div>
+          <div className="info-note">{run?.background ? t('后台任务运行期间可以继续对话；它们结束时助手会收到结果并接着处理。', 'You can keep chatting while these run; when they end the agent is told and picks up from there.') : t('这些任务会在这一轮回复之后继续运行。', 'These go on after this turn’s reply.')}</div>
         )}
       </section>
 

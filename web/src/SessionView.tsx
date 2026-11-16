@@ -267,7 +267,11 @@ export function SessionView({
     })
   }, [])
 
-  const active = runs.find((r) => !isTerminal(r))
+  // The run in flight: the newest one, since a message sent while background tasks keep an
+  // earlier run open takes that run's place.
+  const active = [...runs].reverse().find((r) => !isTerminal(r))
+  // The agent itself is idle then (the run only waits for those tasks), and the next message can go out.
+  const working = !!active && !active.background
   const lastRun = runs[runs.length - 1]
   const failedRun = lastRun && !merged.has(lastRun.id) && (lastRun.status === 'error' || lastRun.status === 'lost') ? lastRun : undefined
 
@@ -565,7 +569,7 @@ export function SessionView({
               )}
             </div>
           )}
-          {active && atLatest && !branch && <RunStatus run={active} />}
+          {active && atLatest && !branch && <RunStatus run={active} onInfo={() => setPane('info')} />}
           <div className="bottom-pad" />
         </div>
       </div>
@@ -581,7 +585,7 @@ export function SessionView({
             : side ? t('接着边聊…', 'Continue the side chat…')
               : t(`回复 ${mlabel} 上的 ${agentName}…`, `Reply to ${agentName} on ${mlabel}…`)
         }
-        busy={!!active && !branch}
+        busy={working && !branch}
         blocked={blocked}
         prefs={prefs}
         machine={machine}
@@ -694,9 +698,9 @@ export function SessionView({
 
 // ---------- run status + permission ----------
 
-function RunStatus({ run }: { run: Run }) {
-  // The reply is in, but the agent's background tasks keep the turn open (the Info panel lists them).
-  const waiting = run.status === 'running' && run.info?.last ? (run.info.tasks || []).filter((x) => x.status === 'running').length : 0
+function RunStatus({ run, onInfo }: { run: Run; onInfo: () => void }) {
+  // The reply is in and the agent is idle; the background tasks it started go on (the Info panel lists them).
+  const tasks = run.background ? (run.info?.tasks || []).filter((x) => x.status === 'running').length : 0
   const [, tick] = useState(0)
   useEffect(() => {
     const t = setInterval(() => tick((x) => x + 1), 1000)
@@ -706,10 +710,16 @@ function RunStatus({ run }: { run: Run }) {
   const elapsed = secs >= 60 ? t(`${Math.floor(secs / 60)} 分 ${secs % 60} 秒`, `${Math.floor(secs / 60)}m ${secs % 60}s`) : t(`${secs} 秒`, `${secs}s`)
   return (
     <div className="runstatus">
-      {run.perm ? <PermissionCard run={run} perm={run.perm} /> : (
+      {run.perm ? <PermissionCard run={run} perm={run.perm} /> : run.background ? (
+        <div className="running-line quiet">
+          <Icon name="clock" size={14} />
+          <span>{tasks > 0 ? t(`${tasks} 个后台任务在运行，结束时助手会接着处理。可以继续对话。`, `${tasks} background task${tasks > 1 ? 's' : ''} running; the agent picks up when ${tasks > 1 ? 'they end' : 'it ends'}. You can keep chatting.`) : t('后台任务在运行，可以继续对话。', 'Background tasks are running. You can keep chatting.')}</span>
+          <button className="linkbtn" onClick={onInfo}>{t('查看', 'Show')}</button>
+        </div>
+      ) : (
         <div className="running-line">
           <Spinner size={14} />
-          <span className="shimmer">{waiting ? t(`等 ${waiting} 个后台任务结束`, `Waiting for ${waiting} background task${waiting > 1 ? 's' : ''}`) : statusText[run.status] || run.status}</span>
+          <span className="shimmer">{statusText[run.status] || run.status}</span>
           <span className="dim">{elapsed}</span>
         </div>
       )}

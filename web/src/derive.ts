@@ -78,7 +78,7 @@ export function runsOf(id: string, runs: Record<string, Run>): Run[] {
 export function liveIndex(runs: Record<string, Run>): Map<string, 'running' | 'permission'> {
   const m = new Map<string, 'running' | 'permission'>()
   for (const r of Object.values(runs)) {
-    if (['done', 'error', 'stopped', 'lost'].includes(r.status)) continue
+    if (['done', 'error', 'stopped', 'lost'].includes(r.status) || r.background) continue // waiting on background tasks is not working
     const k = runSessionKey(r)
     m.set(k, r.status === 'permission' ? 'permission' : m.get(k) === 'permission' ? 'permission' : 'running')
   }

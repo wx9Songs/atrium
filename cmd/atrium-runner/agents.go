@@ -25,10 +25,12 @@ type pendingPerm struct {
 	Suggestions json.RawMessage
 }
 
-// proc is one agent process handling one turn.
+// proc is one agent process. It handles one run; a Claude process that its
+// background tasks keep alive after the turn can be taken over by the
+// session's next message (see take), and reports to that run from then on.
 type proc struct {
 	r   *Runner
-	job Job
+	job Job // what it was started for
 
 	mu          sync.Mutex
 	cmd         *exec.Cmd
@@ -39,6 +41,146 @@ type proc struct {
 
 	tasks    taskBook // background tasks the agent started (Claude)
 	activity int64    // counts the agent's messages, to tell a quiet process from a working one
+
+	// All below under mu.
+	id        string  // the run it reports to now
+	turn      bool    // the agent is working on a turn
+	turns     int     // turns finished
+	idle      bool    // told the hub that only background tasks keep it (the "bg" event)
+	next      *Job    // a message waiting for the turn under way to end
+	mode      string  // permission mode, as the CLI names it
+	model     string  // the model last asked for ("" = the machine's default)
+	resultErr string  // how the last turn failed, if it did
+	spentMs   float64 // time and steps of the turns of the current run
+	steps     float64
+	parts     map[string]any // what the Info panel was last told, by part
+	native    string         // the session's own id, once the agent has said it
+}
+
+// runID is the run this process reports to.
+func (p *proc) runID() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.id == "" {
+		return p.job.ID
+	}
+	return p.id
+}
+
+// info tells the page's Info panel one part and remembers it for the next run.
+func (p *proc) info(part string, v any) {
+	p.mu.Lock()
+	if p.parts == nil {
+		p.parts = map[string]any{}
+	}
+	p.parts[part] = v
+	p.mu.Unlock()
+	p.r.emit(p.runID(), "info", map[string]any{part: v})
+}
+
+var claudeModes = map[string]string{"ask": "default", "plan": "plan", "edits": "acceptEdits", "full": "bypassPermissions"}
+
+// take hands this process the session's next message, if it can have it:
+// "taken" (it is the process's run now), "later" (it will be when the turn
+// under way ends), "closing" (the process is on its way out: start a new one
+// once it is gone) or "no" (its first turn is still going).
+func (p *proc) take(job Job) string {
+	p.mu.Lock()
+	switch {
+	case p.job.Agent != "claude" || p.turns == 0 || job.Fork || job.Rewind || job.IsNew:
+		p.mu.Unlock()
+		return "no"
+	case p.stdin == nil || p.stdinClosed || p.stopped:
+		p.mu.Unlock()
+		return "closing"
+	case p.turn || p.next != nil:
+		if p.next != nil {
+			p.mu.Unlock()
+			return "no" // one waiting message is enough; the hub does not send two
+		}
+		p.next = &job
+		p.mu.Unlock()
+		return "later"
+	}
+	p.mu.Unlock()
+	p.handOver(job)
+	return "taken"
+}
+
+// handOver ends the run the process reported to and makes it job's: the Info
+// panel's parts carry over, mode and model follow the new message, and the
+// message goes to the agent.
+func (p *proc) handOver(job Job) {
+	p.mu.Lock()
+	old := p.id
+	if old == "" {
+		old = p.job.ID
+	}
+	failed := p.resultErr
+	p.id, p.turn, p.idle, p.next = job.ID, true, false, nil
+	p.resultErr, p.spentMs, p.steps = "", 0, 0
+	parts := map[string]any{}
+	for k, v := range p.parts {
+		if k != "last" {
+			parts[k] = v
+		}
+	}
+	delete(p.parts, "last")
+	mode, model := p.mode, p.model
+	p.model = job.Model
+	if want := claudeModes[job.Mode]; want != "" {
+		p.mode = want // the turn's first word from the CLI says what it really is
+	}
+	p.mu.Unlock()
+
+	r := p.r
+	r.mu.Lock()
+	if r.procs[old] == p {
+		delete(r.procs, old)
+	}
+	r.procs[job.ID] = p
+	r.mu.Unlock()
+
+	exit := map[string]any{"stopped": false}
+	if failed != "" {
+		exit["error"], exit["error_zh"] = failed, failed
+	}
+	r.emit(old, "exit", exit)
+	r.emit(job.ID, "status", map[string]any{"state": "starting", "started_ts": time.Now().UnixMilli()})
+	if len(parts) > 0 {
+		r.emit(job.ID, "info", parts)
+	}
+	ctl := func(what string, req map[string]any) {
+		p.write(map[string]any{"type": "control_request", "request_id": what + "_" + job.ID, "request": req})
+	}
+	// A mode the CLI refuses (it will not start skipping permissions half-way) stays as it was: it asks.
+	if want := claudeModes[job.Mode]; want != "" && want != mode {
+		ctl("setmode", map[string]any{"subtype": "set_permission_mode", "mode": want})
+	}
+	if job.Model != model {
+		m := job.Model
+		if m == "" {
+			m = "default"
+		}
+		ctl("setmodel", map[string]any{"subtype": "set_model", "model": m})
+	}
+	if err := p.write(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": job.Prompt}, "parent_tool_use_id": nil}); err != nil {
+		// The process went away under us: when it has ended, start() runs the message in a new one.
+		p.mu.Lock()
+		p.next = &job
+		p.mu.Unlock()
+	}
+}
+
+// closeIfIdle lets a process leave that nothing keeps: no turn, no background
+// task, no message waiting, and quiet since `seen`.
+func (p *proc) closeIfIdle(seen int64) {
+	p.mu.Lock()
+	idle := !p.turn && p.next == nil && p.turns > 0 && atomic.LoadInt64(&p.activity) == seen
+	p.mu.Unlock()
+	if idle && p.tasks.running() == 0 {
+		p.closeStdin()
+	}
 }
 
 func (p *proc) isStopped() bool {
@@ -122,7 +264,7 @@ func (p *proc) launch(bin string, args []string, cwd string, env []string, withS
 	p.cmd, p.stdin = cmd, stdin
 	p.mu.Unlock()
 
-	p.r.emit(p.job.ID, "status", map[string]any{"state": "starting", "started_ts": time.Now().UnixMilli(), "pid": cmd.Process.Pid})
+	p.r.emit(p.runID(), "status", map[string]any{"state": "starting", "started_ts": time.Now().UnixMilli(), "pid": cmd.Process.Pid})
 
 	rd := bufio.NewReaderSize(stdout, 1<<16)
 	for {
@@ -385,21 +527,24 @@ func (p *proc) runClaude() error {
 		args = append(args, "--add-dir", d)
 	}
 
-	gotResult := false
-	resultErr := ""
+	p.mu.Lock()
+	p.mode, p.model = claudeModes[job.Mode], job.Model
+	p.mu.Unlock()
 	sent := false
 	send := func() {
 		if sent {
 			return
 		}
 		sent = true
+		p.mu.Lock()
+		p.turn = true
+		p.mu.Unlock()
 		p.write(map[string]any{"type": "control_request", "request_id": "init_" + job.ID, "request": map[string]any{"subtype": "initialize", "hooks": nil}})
 		p.write(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": job.Prompt}, "parent_tool_use_id": nil})
 	}
 
 	// Questions to the running CLI for the page's Info panel (see info.go).
 	askedCtx := time.Time{}
-	var spentMs, steps float64 // of all the turns of this run
 	ask := func(what, subtype string) {
 		if what == "ctx" {
 			askedCtx = time.Now()
@@ -420,14 +565,14 @@ func (p *proc) runClaude() error {
 			case "init_" + job.ID:
 				r.reportCaps("claude", claudeCaps(inner))
 				if acct, _ := inner["account"].(map[string]any); acct != nil {
-					r.emit(job.ID, "info", map[string]any{"account": map[string]any{"plan": str(acct, "subscriptionType")}})
+					p.info("account", map[string]any{"plan": str(acct, "subscriptionType")})
 				}
 			case "ctx_" + job.ID:
 				if c := slimContext(inner); c != nil {
-					r.emit(job.ID, "info", map[string]any{"context": c})
+					p.info("context", c)
 				}
 			case "mcp_" + job.ID:
-				r.emit(job.ID, "info", map[string]any{"mcp": slimMCP(inner)})
+				p.info("mcp", slimMCP(inner))
 			}
 		case "control_request":
 			req, _ := m["request"].(map[string]any)
@@ -438,7 +583,7 @@ func (p *proc) runClaude() error {
 				p.mu.Lock()
 				p.pending[id] = pendingPerm{Input: in, Suggestions: sug}
 				p.mu.Unlock()
-				r.emit(job.ID, "permission", map[string]any{
+				r.emit(p.runID(), "permission", map[string]any{
 					"request_id": id, "tool_name": str(req, "tool_name"), "input": req["input"],
 					"description": str(req, "description"), "suggestions": req["permission_suggestions"],
 					"blocked_path": str(req, "blocked_path"),
@@ -454,45 +599,59 @@ func (p *proc) runClaude() error {
 			delete(p.pending, id)
 			p.mu.Unlock()
 			if had {
-				r.emit(job.ID, "permission_done", map[string]any{"request_id": id})
+				r.emit(p.runID(), "permission_done", map[string]any{"request_id": id})
 			}
 		case "system":
 			switch str(m, "subtype") {
 			case "init":
+				// A turn begins: the message's, or one the CLI starts by itself to tell
+				// the agent how a background task ended.
+				p.mu.Lock()
+				wasIdle := p.idle
+				p.turn, p.idle = true, false
+				if s := str(m, "permissionMode"); s != "" {
+					p.mode = s
+				}
+				if s := str(m, "session_id"); s != "" {
+					p.native = s
+				}
+				p.mu.Unlock()
+				id := p.runID()
+				if wasIdle {
+					r.emit(id, "bg", map[string]any{"on": false})
+				}
 				if rewound != nil {
-					r.emit(job.ID, "rewind", rewound) // from here on the session follows the new branch
+					r.emit(id, "rewind", rewound) // from here on the session follows the new branch
 					rewound = nil
 				}
-				r.emit(job.ID, "status", map[string]any{"state": "running", "session_id": str(m, "session_id")})
-				r.emit(job.ID, "agent", map[string]any{
+				r.emit(id, "status", map[string]any{"state": "running", "session_id": str(m, "session_id")})
+				r.emit(id, "agent", map[string]any{
 					"type": "system", "subtype": "init", "session_id": str(m, "session_id"), "model": m["model"],
 					"cwd": m["cwd"], "permissionMode": m["permissionMode"], "version": m["claude_code_version"],
 				})
 				atomic.AddInt64(&p.activity, 1)
 				count := func(k string) int { l, _ := m[k].([]any); return len(l) }
-				r.emit(job.ID, "info", map[string]any{"session": map[string]any{
+				p.info("session", map[string]any{
 					"model": m["model"], "mode": m["permissionMode"], "version": m["claude_code_version"], "output_style": m["output_style"],
 					"tools": count("tools"), "skills": count("skills"), "plugins": count("plugins"), "agents": count("agents"),
-				}})
+				})
 				ask("ctx", "get_context_usage")
 				ask("mcp", "mcp_status")
 			case "background_tasks_changed", "task_started", "task_updated", "task_notification":
 				if p.tasks.apply(m) {
-					r.emit(job.ID, "info", map[string]any{"tasks": p.tasks.list()})
+					p.info("tasks", p.tasks.list())
 				}
-				// The turn is over and the last background task has ended. The CLI usually
-				// goes on to tell the agent about it; if it stays quiet, let it exit.
-				if gotResult && p.tasks.running() == 0 {
+				// The last background task has ended. The CLI usually goes on to tell the
+				// agent about it; if it stays quiet and nothing else is going on, let it exit.
+				if p.tasks.running() == 0 {
 					seen := atomic.LoadInt64(&p.activity)
 					go func() {
 						time.Sleep(12 * time.Second)
-						if atomic.LoadInt64(&p.activity) == seen {
-							p.closeStdin()
-						}
+						p.closeIfIdle(seen)
 					}()
 				}
 			case "compact_boundary":
-				r.emit(job.ID, "agent", map[string]any{"type": "system", "subtype": "compact_boundary"})
+				r.emit(p.runID(), "agent", map[string]any{"type": "system", "subtype": "compact_boundary"})
 			}
 		case "assistant", "user":
 			if m["parent_tool_use_id"] != nil {
@@ -500,7 +659,7 @@ func (p *proc) runClaude() error {
 			}
 			atomic.AddInt64(&p.activity, 1)
 			if s := slimClaude(m); s != nil {
-				r.emit(job.ID, "agent", s)
+				r.emit(p.runID(), "agent", s)
 			}
 			if time.Since(askedCtx) > 30*time.Second {
 				ask("ctx", "get_context_usage")
@@ -509,38 +668,64 @@ func (p *proc) runClaude() error {
 			info, _ := m["rate_limit_info"].(map[string]any)
 			r.reportLimits("claude", claudeLimits(info))
 		case "result":
-			gotResult = true
 			isErr, _ := m["is_error"].(bool)
 			res := clipText(str(m, "result"), 4000)
-			if isErr {
-				resultErr = res
-				if resultErr == "" {
-					resultErr = "run failed (" + str(m, "subtype") + ")"
-				}
-			}
-			r.emit(job.ID, "agent", map[string]any{
+			id := p.runID()
+			r.emit(id, "agent", map[string]any{
 				"type": "result", "subtype": m["subtype"], "is_error": isErr, "result": res,
 				"duration_ms": m["duration_ms"], "total_cost_usd": m["total_cost_usd"], "num_turns": m["num_turns"],
 				"session_id": m["session_id"],
 			})
 			atomic.AddInt64(&p.activity, 1)
+			p.mu.Lock()
+			p.turn = false
+			p.turns++
+			p.resultErr = ""
+			if isErr {
+				if p.resultErr = res; res == "" {
+					p.resultErr = "run failed (" + str(m, "subtype") + ")"
+				}
+			}
 			// A run can hold several turns (the CLI starts one for each word from a
 			// background task). Time and steps add up; cost and tokens already do.
 			if n, _ := m["duration_ms"].(float64); n > 0 {
-				spentMs += n
+				p.spentMs += n
 			}
 			if n, _ := m["num_turns"].(float64); n > 0 {
-				steps += n
+				p.steps += n
 			}
-			r.emit(job.ID, "info", map[string]any{"last": map[string]any{
-				"cost": m["total_cost_usd"], "duration_ms": spentMs, "turns": steps, "models": slimModelUsage(m["modelUsage"]),
-			}})
+			spent, steps := p.spentMs, p.steps
+			next := p.next
+			p.next = nil
+			// Nothing keeps the process: no message waiting, no background task. Decided
+			// and done under the lock, so that a message arriving now sees it is leaving.
+			leave := next == nil && p.tasks.running() == 0
+			if leave && p.stdin != nil && !p.stdinClosed {
+				p.stdinClosed = true
+				p.stdin.Close()
+			}
+			p.mu.Unlock()
+			p.info("last", map[string]any{
+				"cost": m["total_cost_usd"], "duration_ms": spent, "turns": steps, "models": slimModelUsage(m["modelUsage"]),
+			})
 			ask("ctx", "get_context_usage")
-			// One turn per process. With background tasks still going the CLI stays up
-			// until they end (and tells the agent); its input stays open meanwhile so
-			// that a task can still be stopped from the page.
-			if p.tasks.running() == 0 {
-				p.closeStdin()
+			r.sync() // the turn is in the transcript now
+			switch {
+			case next != nil:
+				// A message came in while this turn was going: it is the process's run from here.
+				p.handOver(*next)
+			case leave:
+			default:
+				// Background tasks keep the CLI up; it will tell the agent when they end.
+				// Its input stays open, so a task can be stopped and the next message can
+				// go to this same process. The hub is told the agent itself is idle.
+				p.mu.Lock()
+				was := p.idle
+				p.idle = true
+				p.mu.Unlock()
+				if !was {
+					r.emit(id, "bg", map[string]any{"on": true})
+				}
 			}
 		}
 	}
@@ -563,6 +748,9 @@ func (p *proc) runClaude() error {
 	if startErr != nil {
 		return bif("启动 claude 失败：%v", "Could not start claude: %v", startErr)
 	}
+	p.mu.Lock()
+	resultErr, gotResult := p.resultErr, p.turns > 0
+	p.mu.Unlock()
 	if resultErr != "" {
 		if strings.Contains(resultErr, "/login") {
 			return bi("这台机器上的 Claude 命令行还没有登录。请在那台机器的终端里运行 claude 并完成 /login，然后再试。", "The Claude CLI on this machine is not signed in. Run claude in a terminal there, complete /login, then try again.")

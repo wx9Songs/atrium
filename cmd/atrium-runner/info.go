@@ -334,11 +334,7 @@ func (r *Runner) claudeSessionInfo(id, file string) (map[string]any, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, bif("启动 claude 失败：%v", "Could not start claude: %v", err)
 	}
-	defer func() {
-		stdin.Close()
-		cmd.Process.Kill()
-		cmd.Wait()
-	}()
+	defer endCLI(stdin, cmd)
 	for _, sub := range []string{"get_context_usage", "mcp_status", "get_settings"} {
 		req, _ := json.Marshal(map[string]any{"type": "control_request", "request_id": sub, "request": map[string]any{"subtype": sub}})
 		stdin.Write(append(req, '\n'))
@@ -484,4 +480,23 @@ func slimModelUsage(v any) []map[string]any {
 // stopTask asks the running CLI to stop one of its background tasks.
 func (p *proc) stopTask(id string) {
 	p.write(map[string]any{"type": "control_request", "request_id": "stoptask_" + id, "request": map[string]any{"subtype": "stop_task", "task_id": id}})
+}
+
+// endCLI lets a CLI that was only asked questions leave on its own: its input
+// is closed and it gets a few seconds. Killing it at once could catch it while
+// it renews its sign-in (the old token already spent, the new one not yet
+// saved), which signs the machine out.
+func endCLI(stdin interface{ Close() error }, cmd *exec.Cmd) {
+	stdin.Close()
+	done := make(chan struct{})
+	go func() {
+		cmd.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		cmd.Process.Kill()
+		<-done
+	}
 }

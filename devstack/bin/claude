@@ -21,8 +21,10 @@ const flag = (name) => {
 const resume = flag('--resume')
 const fork = argv.includes('--fork-session')
 const cutAt = flag('--resume-session-at')
-const mode = flag('--permission-mode') || 'bypassPermissions'
-const model = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5' }[flag('--model')] || flag('--model') || 'claude-opus-5-5'
+let mode = flag('--permission-mode') || 'bypassPermissions'
+const launchMode = mode
+const MODEL_IDS = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5' }
+let model = MODEL_IDS[flag('--model')] || flag('--model') || 'claude-opus-5-5'
 const effort = flag('--effort') || ''
 const cwd = process.cwd()
 const speed = Number(process.env.FAKE_SPEED || 1)
@@ -293,9 +295,22 @@ rl.on('line', (line) => {
     const res = pending.get(m.response?.request_id)
     pending.delete(m.response?.request_id)
     if (res) res(m.response.response || { behavior: 'deny' })
-  } else if (m.type === 'user' && !running) {
+  } else if (m.type === 'control_request' && m.request?.subtype === 'set_permission_mode') {
+    // Like the real CLI: it will not start skipping permissions half-way.
+    if (m.request.mode === 'bypassPermissions' && launchMode !== 'bypassPermissions') {
+      out({ type: 'control_response', response: { subtype: 'error', request_id: m.request_id, error: 'Cannot set permission mode to bypassPermissions because the session was not launched with it' } })
+    } else {
+      mode = m.request.mode
+      out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response: { mode } } })
+    }
+  } else if (m.type === 'control_request' && m.request?.subtype === 'set_model') {
+    model = MODEL_IDS[m.request.model] || (m.request.model === 'default' ? 'claude-opus-5-5' : m.request.model)
+    out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response: { model } } })
+  } else if (m.type === 'user') {
+    // One turn at a time; a message that arrives during a turn waits for it, as in the real CLI.
     const c = m.message?.content
-    running = turn(typeof c === 'string' ? c : (c || []).map((b) => b.text || '').join('')).catch((e) => {
+    const prompt = typeof c === 'string' ? c : (c || []).map((b) => b.text || '').join('')
+    running = (running || Promise.resolve()).then(() => { aborted = false; return turn(prompt) }).catch((e) => {
       out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: String(e), session_id: sid })
     })
   }

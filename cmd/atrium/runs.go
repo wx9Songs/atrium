@@ -59,6 +59,11 @@ type Run struct {
 	LastTS    int64    `json:"last_ts,omitempty"`
 	Perm      *PermReq `json:"perm,omitempty"`
 	Seq       int      `json:"seq"`
+	// Background: the agent has answered and is idle, but the background tasks it
+	// started keep its process (and so this run) alive. The session's next message
+	// can be sent; the runner hands it to that same process, which then reports
+	// to the new run while this one ends.
+	Background bool `json:"background,omitempty"`
 	// Info is what the runner last reported for the page's Info panel, by part:
 	// "context", "tasks", "mcp", "session", "last", "account" (see the runner's info.go).
 	Info map[string]json.RawMessage `json:"info,omitempty"`

@@ -338,7 +338,7 @@ func (r *Runner) hello() error {
 		"shell":  r.cfg.AllowShell,
 		"terms":  terms,
 		// What this runner understands, so the page only offers what will work.
-		"features": []string{"fork", "caps", "term", "files", "effort", "rewind", "limits", "upload", "info"},
+		"features": []string{"fork", "caps", "term", "files", "effort", "rewind", "limits", "upload", "info", "bgchat"},
 	}
 	if err := r.request("POST", "/api/runner/hello", body, nil, 30*time.Second); err != nil {
 		return err
@@ -439,25 +439,49 @@ func (r *Runner) proc(id string) *proc {
 func (j Job) continues() bool { return !j.IsNew && !j.Fork && j.NativeID != "" }
 
 func (r *Runner) start(job Job) {
-	r.mu.Lock()
-	if _, dup := r.procs[job.ID]; dup {
-		r.mu.Unlock()
-		return
-	}
-	// Two agents continuing one session at once would write over each other and
-	// do the work twice. The hub does not ask for that; this is the last line of
-	// defence for when it has lost track of a run that is still going on here.
-	if job.continues() {
-		for _, x := range r.procs {
-			if x.job.continues() && x.job.Agent == job.Agent && x.job.NativeID == job.NativeID {
-				r.mu.Unlock()
-				zh, en := both(bi("这个会话在这台机器上还在运行，等它结束或先停止它", "This session is still running on this machine. Wait for it to finish or stop it first"))
-				r.emit(job.ID, "exit", map[string]any{"stopped": false, "error_zh": zh, "error": en})
-				return
+	for wait := 0; ; wait++ {
+		r.mu.Lock()
+		if _, dup := r.procs[job.ID]; dup {
+			r.mu.Unlock()
+			return
+		}
+		// Two agents continuing one session at once would write over each other and
+		// do the work twice. The session's process, if there is one, is either still
+		// on its first turn (the hub does not ask for this; it is the last line of
+		// defence for when it lost track of a run) or kept alive by its background
+		// tasks, and then the message goes to that same process.
+		var busy *proc
+		if job.continues() {
+			for _, x := range r.procs {
+				if x.job.continues() && x.job.Agent == job.Agent && x.job.NativeID == job.NativeID || x.sameSession(job) {
+					busy = x
+					break
+				}
 			}
 		}
+		if busy == nil {
+			break
+		}
+		r.mu.Unlock()
+		switch busy.take(job) {
+		case "taken":
+			return
+		case "later":
+			r.mu.Lock()
+			r.procs[job.ID] = busy // so that it can be stopped while it waits
+			r.mu.Unlock()
+			return
+		case "closing":
+			if wait < 150 {
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+		}
+		zh, en := both(bi("这个会话在这台机器上还在运行，等它结束或先停止它", "This session is still running on this machine. Wait for it to finish or stop it first"))
+		r.emit(job.ID, "exit", map[string]any{"stopped": false, "error_zh": zh, "error": en})
+		return
 	}
-	p := &proc{r: r, job: job, pending: map[string]pendingPerm{}}
+	p := &proc{r: r, job: job, id: job.ID, pending: map[string]pendingPerm{}}
 	r.procs[job.ID] = p
 	r.mu.Unlock()
 
@@ -472,16 +496,44 @@ func (r *Runner) start(job Job) {
 		err = bif("不支持的助手：%s", "Unsupported agent: %s", job.Agent)
 	}
 
+	// The process is gone. It reports the end to the run it had last; a message
+	// that was still waiting for it starts over in a process of its own.
 	r.mu.Lock()
-	delete(r.procs, job.ID)
+	for id, x := range r.procs {
+		if x == p {
+			delete(r.procs, id)
+		}
+	}
 	r.mu.Unlock()
+	p.mu.Lock()
+	id, next := p.id, p.next
+	p.next = nil
+	p.mu.Unlock()
 
+	r.sync()
 	exit := map[string]any{"stopped": p.isStopped()}
 	if err != nil && !p.isStopped() {
 		exit["error_zh"], exit["error"] = both(err)
 	}
-	r.emit(job.ID, "exit", exit)
-	r.sync()
+	if next != nil && !p.isStopped() {
+		if next.ID != id {
+			r.emit(id, "exit", exit)
+		}
+		go r.start(*next) // the message never reached the agent
+		return
+	}
+	r.emit(id, "exit", exit)
+	if next != nil && next.ID != id {
+		r.emit(next.ID, "exit", map[string]any{"stopped": true})
+	}
+}
+
+// sameSession: is this process, started for a new session or a fork, the one
+// that now holds job's session? (Its job does not name the session it made.)
+func (p *proc) sameSession(job Job) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.native != "" && p.job.Agent == job.Agent && p.native == job.NativeID
 }
 
 // sync pushes fresh transcripts to the archive right after a turn.

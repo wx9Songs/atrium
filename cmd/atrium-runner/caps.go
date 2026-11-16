@@ -59,11 +59,7 @@ func (r *Runner) probeClaude() map[string]any {
 	if err := cmd.Start(); err != nil {
 		return nil
 	}
-	defer func() {
-		stdin.Close()
-		cmd.Process.Kill()
-		cmd.Wait()
-	}()
+	defer endCLI(stdin, cmd)
 	req, _ := json.Marshal(map[string]any{"type": "control_request", "request_id": "caps", "request": map[string]any{"subtype": "initialize", "hooks": nil}})
 	stdin.Write(append(req, '\n'))
 	rd := bufio.NewReaderSize(stdout, 1<<16)

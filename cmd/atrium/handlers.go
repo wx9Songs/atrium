@@ -260,9 +260,16 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 			p := prev[len(prev)-1]
 			run.SessionID, run.NativeID, run.Agent, run.Machine, run.Cwd = p.SessionID, p.NativeID, p.Agent, p.Machine, p.Cwd
 		}
-		busy := s.runs.List(func(x *Run) bool { return x.SessionID == run.SessionID && !terminal(x.Status) })
+		// A run whose agent is idle and only waits for its background tasks does not hold the session.
+		busy := s.runs.List(func(x *Run) bool { return x.SessionID == run.SessionID && !terminal(x.Status) && !x.Background })
 		if len(busy) > 0 {
 			writeErr(w, http.StatusConflict, L(r, "这个会话正在运行中，请等它结束或先停止", "This session is running. Wait for it to finish or stop it first"))
+			return
+		}
+		waiting := s.runs.List(func(x *Run) bool { return x.SessionID == run.SessionID && !terminal(x.Status) })
+		if len(waiting) > 0 && body.Rewind != nil {
+			// Rewriting history needs a process of its own, and the session's is still alive.
+			writeErr(w, http.StatusConflict, L(r, "这个会话还有后台任务在运行，先在信息面板里停掉它们，再改写消息", "This session still has background tasks running. Stop them in the Info panel before rewriting a message"))
 			return
 		}
 		if rw := body.Rewind; rw != nil {
@@ -411,7 +418,7 @@ func (s *Server) finishRun(id, status string, cause error) {
 		if terminal(x.Status) {
 			return
 		}
-		x.Status, x.Error, x.ErrorZh, x.Ended, x.Perm = status, en, zh, now, nil
+		x.Status, x.Error, x.ErrorZh, x.Ended, x.Perm, x.Background = status, en, zh, now, nil, false
 	})
 	if ok {
 		s.bus.Publish("run", map[string]any{"run": run, "event": ev})
@@ -649,6 +656,12 @@ func (s *Server) applyRunEvent(machine string, ev inEvent) {
 			if x.Status == "starting" || x.Status == "queued" {
 				x.Status = "running"
 			}
+		case "bg":
+			var d struct {
+				On bool `json:"on"`
+			}
+			json.Unmarshal(ev.Data, &d)
+			x.Background = d.On
 		case "info":
 			var parts map[string]json.RawMessage
 			if json.Unmarshal(ev.Data, &parts) != nil {
@@ -683,7 +696,7 @@ func (s *Server) applyRunEvent(machine string, ev inEvent) {
 			if d.ErrorZh == "" {
 				d.ErrorZh = d.Error
 			}
-			x.Perm, x.Ended, x.Error, x.ErrorZh = nil, now, d.Error, d.ErrorZh
+			x.Perm, x.Ended, x.Error, x.ErrorZh, x.Background = nil, now, d.Error, d.ErrorZh, false
 			switch {
 			case d.Stopped:
 				x.Status = "stopped"

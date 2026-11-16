@@ -110,6 +110,8 @@ export type Run = {
   last_ts?: number
   perm?: PermReq
   seq: number
+  /** The agent has answered and is idle; only its background tasks keep the run open. The next message can be sent. */
+  background?: boolean
   /** What the runner last reported for the Info panel during this run. */
   info?: SessionInfo
 }
