@@ -70,7 +70,7 @@ export function SidePane({
       <div className="pane-head" data-drag>
         <div className="tabs">
           {tabs.map(([k, icon, label]) => (
-            <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}><Icon name={icon} size={15} />{label}</button>
+            <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)} title={label}><Icon name={icon} size={15} /><span>{label}</span></button>
           ))}
         </div>
         <span className="grow" />

@@ -5,6 +5,10 @@
 //   swift make-icon.swift out.png             the macOS icon, 1024px, plate plus shadow
 //   swift make-icon.swift out.png --flat 128  just the plate, edge to edge: the page's
 //                                             logo and tab icon (web/src/logo.png)
+//   swift make-icon.swift out.png --square 512  the plate on a full square of its own
+//                                             colour, no transparent corners: what a
+//                                             phone's home screen wants (it cuts the
+//                                             shape itself)
 import AppKit
 import ImageIO
 import UniformTypeIdentifiers
@@ -12,7 +16,9 @@ import UniformTypeIdentifiers
 let args = CommandLine.arguments
 let out = args.count > 1 ? args[1] : "icon-1024.png"
 var flat: CGFloat? = nil
+var square = false
 if let i = args.firstIndex(of: "--flat"), i + 1 < args.count, let n = Double(args[i + 1]) { flat = CGFloat(n) }
+if let i = args.firstIndex(of: "--square"), i + 1 < args.count, let n = Double(args[i + 1]) { flat = CGFloat(n); square = true }
 
 let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 guard let source = CGImageSourceCreateWithURL(here.appendingPathComponent("icon-source.webp") as CFURL, nil),
@@ -43,6 +49,10 @@ let ctx = CGContext(data: nil, width: Int(canvas), height: Int(canvas), bitsPerC
                     space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
 ctx.interpolationQuality = .high
 
+if square {
+    ctx.setFillColor(rgb(0xfdf0e2))
+    ctx.fill(CGRect(x: 0, y: 0, width: canvas, height: canvas))
+}
 if flat == nil {
     // A soft, slightly rosy drop shadow under the plate.
     ctx.saveGState()
@@ -63,7 +73,7 @@ ctx.restoreGState()
 let line = max(1, 2 * scale)
 let inner = rect.insetBy(dx: line / 2, dy: line / 2)
 ctx.addPath(CGPath(roundedRect: inner, cornerWidth: 186 * scale - line / 2, cornerHeight: 186 * scale - line / 2, transform: nil))
-ctx.setStrokeColor(rgb(0x7a3a52, 0.12))
+ctx.setStrokeColor(rgb(0x7a3a52, square ? 0 : 0.12))
 ctx.setLineWidth(line)
 ctx.strokePath()
 

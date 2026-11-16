@@ -638,8 +638,8 @@ ul.plain { margin: 6px 0 0; padding-left: 1.3em; color: var(--text-2); font-size
 /* ---------- side panel ---------- */
 .pane { width: 440px; flex: none; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--bg); }
 .pane-head { display: flex; align-items: center; height: var(--head); padding: 0 10px 0 12px; border-bottom: 1px solid var(--line-2); flex: none; }
-.tabs { display: inline-flex; gap: 2px; }
-.tabs button { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 11px; border-radius: 8px; font-size: 13px; color: var(--text-3); }
+.tabs { display: flex; gap: 2px; min-width: 0; }
+.tabs button { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 11px; border-radius: 8px; font-size: 13px; color: var(--text-3); white-space: nowrap; flex: none; }
 .tabs button:hover { color: var(--text); }
 .tabs button.on { background: var(--hover); color: var(--text); font-weight: 550; }
 .pane-bar { display: flex; align-items: center; gap: 2px; padding: 6px 8px 0 10px; min-height: 38px; flex: none; }
@@ -935,3 +935,19 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 
 .running-line.quiet { color: var(--text-3); font-size: 13px; }
 .running-line.quiet .linkbtn { margin-left: 2px; }
+
+/* The panel's tabs stay on one line: when it is narrow, only the open tab keeps its name. */
+.pane-head { container-type: inline-size; }
+@container (max-width: 354px) { .pane-head .tabs button:not(.on) span { display: none; } .pane-head .tabs button:not(.on) { padding: 0 9px; } }
+/* English names are longer than 信息 / 边聊 / 终端 / 文件. */
+@container (max-width: 410px) { :root:not([lang^='zh']) .pane-head .tabs button:not(.on) span { display: none; } :root:not([lang^='zh']) .pane-head .tabs button:not(.on) { padding: 0 9px; } }
+@container (max-width: 300px) { .pane-head .tabs button.on span { display: none; } }
+
+/* A phone: keep clear of the home indicator and the rounded corners, also as a home-screen app. */
+body { -webkit-tap-highlight-color: transparent; }
+@media (max-width: 820px) {
+  .composer-wrap { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  .sidebar, .pane, .home { padding-bottom: env(safe-area-inset-bottom); }
+  .app { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+}
+@media (display-mode: standalone) { .brand-sub { display: none; } }
