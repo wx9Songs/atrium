@@ -104,6 +104,38 @@ func (ms *Machines) syncConfig() bool {
 	return true
 }
 
+// label is the name a machine is shown under: the one given to it, else its own.
+func (ms *Machines) label(name string) string {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	if l := ms.cfg.Labels[name]; l != "" {
+		return l
+	}
+	return name
+}
+
+// setLabel changes the name a machine is shown under and writes it to the
+// config file; an empty label goes back to the machine's own name. The file
+// is read again first, so what was edited in it by hand since the start stays.
+func (ms *Machines) setLabel(name, label string) error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	fresh, err := loadConfig(ms.cfg.path)
+	if err != nil {
+		return err
+	}
+	if label == "" {
+		delete(fresh.Labels, name)
+	} else {
+		fresh.Labels[name] = label
+	}
+	if err := fresh.save(); err != nil {
+		return err
+	}
+	ms.cfg.Labels = fresh.Labels
+	return nil
+}
+
 // setCaps stores what an agent on a machine offers (kept across restarts, so
 // the "/" menu is complete before the first run) and reports whether it changed.
 func (ms *Machines) setCaps(name string, data json.RawMessage) bool {

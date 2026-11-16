@@ -3,11 +3,11 @@
 // list by date, like a chat app. Either way it can be filtered by machine and
 // agent, and empty or one-off sessions are tucked away.
 import { useEffect, useMemo, useState } from 'react'
-import { Session } from './api'
+import { api, Session } from './api'
 import { DeviceLink } from './Dialogs'
 import { allSessions, liveIndex, runSessionKey } from './derive'
 import { AgentTag, Icon, Logo, Spinner } from './icons'
-import { setMeta, signOut, startIn, useStore } from './store'
+import { setMachines, setMeta, signOut, startIn, useStore } from './store'
 import { UsageLine } from './Usage'
 import { Dropdown, kbd, MenuItem, MenuLabel, MenuSep, Segmented, toast, usePersisted } from './ui'
 import { agentName, copyText, displayTitle, folderName, imeKey, machineLabel, ms, resumeCommand, shortTime, timeBucket } from './util'
@@ -341,6 +341,27 @@ export function Sidebar({
           const moreFolders = node.folders.length - folders.length
           return (
             <div className="tree-m" key={node.key}>
+              {renaming === node.key ? (
+                <div className="tree-head m">
+                  <input
+                    autoFocus
+                    className="rename"
+                    defaultValue={node.label}
+                    placeholder={node.name}
+                    maxLength={60}
+                    onFocus={(e) => e.target.select()}
+                    onBlur={(e) => {
+                      setRenaming('')
+                      const v = e.target.value.trim()
+                      if (v !== node.label) api.machineLabel(node.name, v).then((d) => setMachines(d.machines)).catch((err) => toast(err.message))
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !imeKey(e)) (e.target as HTMLInputElement).blur()
+                      if (e.key === 'Escape') setRenaming('')
+                    }}
+                  />
+                </div>
+              ) : (
               <div className={'tree-head m' + (node.runner ? ' can-add' : '') + (mOpen ? ' open' : '')}>
                 <button className="tree-toggle" onClick={() => toggle(node.key, mOpen)} title={node.state === 'on' ? t('在线', 'Online') : node.state === 'off' ? t('不在线', 'Offline') : t('仅历史，没有接入操控', 'History only, no runner')}>
                   <Icon name={node.server ? 'server' : 'machine'} size={16} className="micon" />
@@ -350,12 +371,16 @@ export function Sidebar({
                   {!mOpen && liveMark(liveOf(node.folders.flatMap((f) => f.items)))}
                   <Icon name={mOpen ? 'down' : 'right'} size={12} className="chev" />
                 </button>
+                <button className="tree-add tree-edit" title={t('给这台机器改名（只改显示的名字）', 'Rename this machine (only the name shown)')} onClick={() => setRenaming(node.key)}>
+                  <Icon name="edit" size={14} />
+                </button>
                 {node.runner && (
                   <button className="tree-add" title={t('在这台机器上开新会话，目录可以选或填', 'New session on this machine: pick or type the folder')} onClick={() => { startIn(node.name, ''); onNew() }}>
                     <Icon name="plus" size={15} />
                   </button>
                 )}
               </div>
+              )}
               {mOpen && (
                 <div className="tree-kids">
                   {folders.map((f) => {

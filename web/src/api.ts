@@ -303,6 +303,8 @@ export const api = {
   /** Have a machine's runner ask its agents again for their models and commands. */
   sessionInfo: (id: string) => req<SessionInfo>('/api/session-info?id=' + enc(id)),
   stopTask: (runId: string, taskId: string) => req<{ ok: boolean }>(`/api/runs/${enc(runId)}/stop-task`, { method: 'POST', body: { task_id: taskId } }),
+  /** Rename a machine as the page shows it; an empty label goes back to its own name. */
+  machineLabel: (machine: string, label: string) => req<{ machines: Machine[] }>(`/api/machines/${enc(machine)}/label`, { method: 'POST', body: { label } }),
   capsRefresh: (machine: string) => req<{ machines: Machine[] }>(`/api/machines/${enc(machine)}/caps`, { method: 'POST', body: {} }),
   terms: () => req<{ terms: Term[] }>('/api/terms'),
   termOpen: (body: { machine: string; key: string; cwd: string; cols: number; rows: number }) => req<{ term: Term }>('/api/terms', { method: 'POST', body }),

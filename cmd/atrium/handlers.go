@@ -465,6 +465,38 @@ func (s *Server) handleStopTask(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCapsRefresh asks a machine's runner to read its agents' models and commands again.
+// handleMachineLabel renames a machine as the page shows it. The machine's own
+// name, which its runner and the archive know it by, stays.
+func (s *Server) handleMachineLabel(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var body struct {
+		Label string `json:"label"`
+	}
+	if err := readJSON(r, &body, 1<<10); err != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	known := false
+	for _, m := range s.machineList(r.Context()) {
+		known = known || m.Name == name
+	}
+	if !known {
+		writeErr(w, 404, L(r, "没有这台机器", "No such machine"))
+		return
+	}
+	label := clip(body.Label, 60)
+	if label == name {
+		label = ""
+	}
+	if err := s.mach.setLabel(name, label); err != nil {
+		writeErr(w, 500, L(r, "没能写入配置文件：", "Could not write the config file: ")+err.Error())
+		return
+	}
+	list := s.machineList(r.Context())
+	s.bus.Publish("machines", list)
+	writeJSON(w, 200, map[string]any{"machines": list})
+}
+
 func (s *Server) handleCapsRefresh(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !s.mach.supports(name, "effort") {

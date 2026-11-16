@@ -38,7 +38,7 @@ Atrium is the fix I wanted: an *atrium* is the open court in the middle of a hou
 ## What you can do
 
 **See everything**
-- Every session from every machine in one sidebar: machine, then working folder, then sessions newest first. Or a flat list by day.
+- Every session from every machine in one sidebar: machine, then working folder, then sessions newest first. Or a flat list by day. The pencil on a machine's row renames it; that changes only the name shown.
 - Full history with tool calls folded into tidy steps, and full-text search across all of it.
 - Folders and sessions nobody has touched for seven days fold themselves away, so the list stays about current work.
 - Usage on a status bar along the bottom of the window: how much of each agent's plan limit is used and when it resets, and the tokens of the last seven days by day, machine and model. The limits are what the `claude` and `codex` CLIs on your machines last saw; Atrium does not ask the services itself.

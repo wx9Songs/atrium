@@ -84,6 +84,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/presence", b(s.handlePresence))
 	mux.HandleFunc("POST /api/ls", b(s.handleLs))
 	mux.HandleFunc("POST /api/machines/{name}/caps", b(s.handleCapsRefresh))
+	mux.HandleFunc("POST /api/machines/{name}/label", b(s.handleMachineLabel))
 	mux.HandleFunc("GET /api/terms", b(s.handleTermList))
 	mux.HandleFunc("POST /api/terms", b(s.handleTermOpen))
 	mux.HandleFunc("GET /api/terms/{id}", b(s.handleTermGet))

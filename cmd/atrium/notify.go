@@ -221,10 +221,7 @@ func (s *Server) noteFor(kind string, run Run) note {
 		}
 		return e
 	}
-	x := note{Kind: kind, Machine: run.Machine}
-	if l := s.cfg.Labels[run.Machine]; l != "" {
-		x.Machine = l
-	}
+	x := note{Kind: kind, Machine: s.mach.label(run.Machine)}
 	switch kind {
 	case "permission":
 		x.Head = pick("需要你确认", "Needs your OK")

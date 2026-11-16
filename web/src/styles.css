@@ -274,6 +274,11 @@ kbd { font-family: var(--sans); font-size: 11px; color: var(--text-3); letter-sp
 .tree-head.m.can-add:hover .tcount { visibility: visible; }
 .tree-head.m.can-add:hover .chev { visibility: hidden; }
 .tree-add:hover { color: var(--text); background: var(--active); }
+.tree-head.m .tree-edit { right: 32px; }
+.tree-head.m:not(.can-add) .tree-edit { right: 6px; }
+.tree-head.m:hover .tree-edit { display: inline-flex; }
+.tree-head.m:hover .chev { visibility: hidden; }
+.tree-head.m .rename { flex: 1; height: 36px; font-size: 13.5px; font-weight: 650; border: 1px solid var(--accent); border-radius: 10px; padding: 0 10px; outline: 0; background: var(--panel); min-width: 0; }
 .tree-empty { padding: 5px 8px; font-size: 12px; color: var(--text-3); }
 .tree-head.can-add:hover .tree-add { display: inline-flex; }
 .tree-head.can-add:hover .tcount { visibility: hidden; }
