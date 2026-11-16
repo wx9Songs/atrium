@@ -39,8 +39,22 @@ type NotifyConf struct {
 	Always bool `json:"always,omitempty"`
 }
 
+// A note is one notification. Text is all of it, ready to send; the rest are its
+// parts, for a command that lays the message out itself ({json}, ATRIUM_JSON).
 type note struct {
-	Kind, Head, Title, Detail, Machine, URL, Text string
+	Kind    string `json:"kind"` // permission | done | error | reply (what became of an answer)
+	Head    string `json:"head"`
+	Title   string `json:"title"`
+	Detail  string `json:"detail"`
+	Machine string `json:"machine"`
+	URL     string `json:"url"`
+	Text    string `json:"text"`
+	// For a permission request that can be answered from the notification: its
+	// id, the ready answers, and how to answer in writing.
+	Request string   `json:"request,omitempty"`
+	Choices []choice `json:"choices,omitempty"`
+	Hint    string   `json:"hint,omitempty"`
+	OK      bool     `json:"ok,omitempty"` // reply: the answer went through
 }
 
 // A page counts as watched for this long after it last said so; it says so
@@ -126,8 +140,9 @@ func (n *notifier) send(x note) {
 
 // run runs the command for one notification and returns what it printed.
 func (n *notifier) run(x note) (string, error) {
+	all, _ := json.Marshal(x)
 	vals := []string{"{text}", x.Text, "{head}", x.Head, "{title}", x.Title, "{detail}", x.Detail,
-		"{kind}", x.Kind, "{machine}", x.Machine, "{url}", x.URL}
+		"{kind}", x.Kind, "{machine}", x.Machine, "{url}", x.URL, "{json}", string(all)}
 	rep := strings.NewReplacer(vals...)
 	args := make([]string, len(n.conf.Command))
 	for i, a := range n.conf.Command {
@@ -205,7 +220,10 @@ func (s *Server) noteFor(kind string, run Run) note {
 		if len(questionsOf(run.Perm)) > 0 {
 			x.Head = pick("需要你回答", "Needs your answer")
 		}
-		x.Detail = askText(run.Perm, zh, len(s.notify.conf.Replies) > 0)
+		x.Detail = askText(run.Perm, zh)
+		if run.Perm != nil && len(s.notify.conf.Replies) > 0 {
+			x.Request, x.Choices, x.Hint = run.Perm.RequestID, choicesOf(run.Perm, zh), replyHint(run.Perm, zh)
+		}
 	case "done":
 		x.Head = pick("已完成", "Done")
 		x.Detail = s.lastReply(run.ID)
@@ -236,6 +254,9 @@ func (s *Server) noteFor(kind string, run Run) note {
 	x.Text = x.Head + " · " + x.Title + pick("（", " (") + x.Machine + pick("）", ")")
 	if x.Detail != "" {
 		x.Text += "\n" + x.Detail
+	}
+	if x.Hint != "" {
+		x.Text += "\n" + x.Hint
 	}
 	if x.URL != "" {
 		x.Text += "\n" + x.URL

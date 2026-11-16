@@ -201,13 +201,14 @@ The hub can run a command of yours when a run needs your OK, has answered, or fa
 ```
 
 - `command` runs without a shell. `{text}` is the whole message: what happened, the session's title, the machine, a line of detail, the link. `{head}`, `{title}`, `{detail}`, `{kind}`, `{machine}` and `{url}` are its parts. The same values are in the environment (`ATRIUM_TEXT` and so on), and the message is on standard input, so `["curl", "-s", "--data-binary", "@-", "https://ntfy.sh/your-topic"]` works too.
+- A command that lays the message out itself (a card with buttons, say) gets every part as one JSON object in `{json}` and `ATRIUM_JSON`: `kind`, `head`, `title`, `detail`, `machine`, `url`, `text`, and for a request that can be answered, `request`, `choices` (label and the reply that picks it) and `hint`. A reply line may name the request it answers: `{"text": "1", "request": "..."}`.
 - `url` is the page's address as your phone reaches it; the message then ends with a link to the session.
 - `on` picks what to tell about: any of `"permission"`, `"done"`, `"error"`. Leave it out for all three.
 - `lang` is `"en"` or `"zh"`.
 - `replies` lets you answer from where the notification arrived. It is a command that keeps running and prints what you write back, one JSON object per line: `{"text": "1"}`. A permission request then says "Reply 1 to allow, 2 to deny", a question lists its options by number, and your reply answers the latest request still waiting. Make sure the command passes on only your own messages: whoever can write to it can approve what your agents ask for. For Feishu/Lark: `["lark-cli", "event", "consume", "im.message.receive_v1", "--as", "bot", "--jq", "select(.chat_type == \"p2p\" and .sender_id == \"ou_xxx\") | {id: .message_id, text: .content}"]`.
 - Nothing is sent while an Atrium page is in front of you: visible, focused, and used in the last five minutes. `"always": true` sends anyway.
 
-The hub's systemd unit from the setup guide keeps it off the network, so a command that calls a service fails there. [scripts/notify-feishu.sh](scripts/notify-feishu.sh) is a small separate service for that case: the hub leaves messages in a folder, the script sends them and writes your replies back.
+The hub's systemd unit from the setup guide keeps it off the network, so a command that calls a service fails there. [scripts/notify-feishu.py](scripts/notify-feishu.py) is a small separate service for that case: the hub leaves messages in a folder, the script sends them as cards with buttons and writes back what you press or reply.
 
 `atrium notify-test` sends a test message. Mind that a message carries the session's title and the first lines of the agent's reply through whatever service your command uses.
 

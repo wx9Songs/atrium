@@ -41,8 +41,8 @@ func questionsOf(p *PermReq) []question {
 }
 
 // askText is what a notification about a permission request says below its
-// first line: what is asked, and how to answer by writing back.
-func askText(p *PermReq, zh, canReply bool) string {
+// first line: what is asked.
+func askText(p *PermReq, zh bool) string {
 	pick := func(z, e string) string {
 		if zh {
 			return z
@@ -69,13 +69,6 @@ func askText(p *PermReq, zh, canReply bool) string {
 				}
 			}
 		}
-		if canReply {
-			b.WriteString("\n" + pick("回复选项的编号，或者直接写你的回答", "Reply with the number of an option, or write your own answer"))
-			if len(qs) > 1 {
-				b.WriteString(pick("；每个问题一行", ", one line per question"))
-			}
-			b.WriteString(pick("。回复 0 跳过。", ". Reply 0 to skip."))
-		}
 		return b.String()
 	}
 	b.WriteString(p.ToolName)
@@ -92,13 +85,64 @@ func askText(p *PermReq, zh, canReply bool) string {
 	case p.Description != "":
 		b.WriteString(": " + clip(p.Description, 300))
 	}
-	if canReply {
-		b.WriteString("\n" + pick("回复 1 允许，2 拒绝", "Reply 1 to allow, 2 to deny"))
-		if canAlways(p) {
-			b.WriteString(pick("，3 以后都允许", ", 3 to always allow"))
-		}
-	}
 	return b.String()
+}
+
+// replyHint says how to answer a request by writing back.
+func replyHint(p *PermReq, zh bool) string {
+	pick := func(z, e string) string {
+		if zh {
+			return z
+		}
+		return e
+	}
+	if qs := questionsOf(p); len(qs) > 0 {
+		h := pick("回复选项的编号，或者直接写你的回答", "Reply with the number of an option, or write your own answer")
+		if len(qs) > 1 {
+			h += pick("；每个问题一行", ", one line per question")
+		}
+		return h + pick("。回复 0 跳过。", ". Reply 0 to skip.")
+	}
+	h := pick("回复 1 允许，2 拒绝", "Reply 1 to allow, 2 to deny")
+	if canAlways(p) {
+		h += pick("，3 以后都允许", ", 3 to always allow")
+	}
+	return h
+}
+
+// A choice is one ready answer to a request: what a button would say, and the
+// reply that picks it.
+type choice struct {
+	Label string `json:"label"`
+	Reply string `json:"reply"`
+	Style string `json:"style,omitempty"` // "primary", "danger" or empty
+}
+
+// choicesOf lists the ready answers to a request, for a command that can show
+// buttons. A question with several parts, or one that takes several options,
+// has none: it is answered in writing.
+func choicesOf(p *PermReq, zh bool) []choice {
+	pick := func(z, e string) string {
+		if zh {
+			return z
+		}
+		return e
+	}
+	if qs := questionsOf(p); len(qs) > 0 {
+		if len(qs) != 1 || qs[0].MultiSelect || len(qs[0].Options) > 8 {
+			return nil
+		}
+		out := []choice{}
+		for i, o := range qs[0].Options {
+			out = append(out, choice{Label: clip(o.Label, 40), Reply: strconv.Itoa(i + 1)})
+		}
+		return append(out, choice{Label: pick("跳过", "Skip"), Reply: "0"})
+	}
+	out := []choice{{pick("允许", "Allow"), "1", "primary"}, {pick("拒绝", "Deny"), "2", "danger"}}
+	if canAlways(p) {
+		out = append(out, choice{Label: pick("以后都允许", "Always allow"), Reply: "3"})
+	}
+	return out
 }
 
 func canAlways(p *PermReq) bool {
@@ -142,6 +186,17 @@ func (s *Server) waiting() (Run, bool) {
 	return Run{}, false
 }
 
+func (n *notifier) isAsked(request string) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, a := range n.asked {
+		if a.request == request {
+			return true
+		}
+	}
+	return false
+}
+
 func (n *notifier) forget(request string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -159,8 +214,9 @@ var replyWords = map[string]string{
 	"3": "always", "always": "always", "总是": "always", "总是允许": "always", "以后都允许": "always", "一直允许": "always",
 }
 
-// reply takes what was written back and answers the latest waiting request with it.
-func (s *Server) reply(text string) {
+// reply takes what was written back and answers a waiting request with it: the
+// one named (a button says which request it belongs to), else the latest.
+func (s *Server) reply(text, request string) {
 	n := s.notify
 	zh := n.conf.Lang == "zh"
 	pick := func(z, e string) string {
@@ -169,8 +225,9 @@ func (s *Server) reply(text string) {
 		}
 		return e
 	}
+	answered := false
 	say := func(head string, run *Run) {
-		x := note{Kind: "reply", Head: head, Text: head}
+		x := note{Kind: "reply", Head: head, Text: head, Request: request, OK: answered}
 		if run != nil {
 			full := s.noteFor("reply", *run)
 			x.Title, x.Machine, x.URL = full.Title, full.Machine, full.URL
@@ -182,8 +239,17 @@ func (s *Server) reply(text string) {
 	if text == "" {
 		return
 	}
-	run, ok := s.waiting()
-	if !ok {
+	var run Run
+	ok := false
+	if request != "" {
+		for _, x := range s.runs.List(func(x *Run) bool { return x.Perm != nil && x.Perm.RequestID == request }) {
+			run, ok = x, n.isAsked(request)
+		}
+		if !ok {
+			say(pick("这个请求已经处理过了", "This request was already answered"), nil)
+			return
+		}
+	} else if run, ok = s.waiting(); !ok {
 		say(pick("现在没有在等你确认的请求", "Nothing is waiting for your answer right now"), nil)
 		return
 	}
@@ -246,6 +312,7 @@ func (s *Server) reply(text string) {
 		return
 	}
 	n.forget(p.RequestID)
+	answered = true
 	say(done, &run)
 }
 
@@ -268,7 +335,8 @@ func pickOptions(q question, text string) string {
 }
 
 // listen keeps the "replies" command running and takes each line it prints,
-// a JSON object with "text" (and "id", to tell a repeated delivery), as a reply.
+// a JSON object with "text" (and "id", to tell a repeated delivery; "request",
+// when it answers one request in particular), as a reply.
 func (s *Server) listen(ctx context.Context) {
 	n := s.notify
 	if !n.on() || len(n.conf.Replies) == 0 {
@@ -289,8 +357,9 @@ func (s *Server) listen(ctx context.Context) {
 			sc.Buffer(make([]byte, 64<<10), 1<<20)
 			for sc.Scan() {
 				var m struct {
-					ID   string `json:"id"`
-					Text string `json:"text"`
+					ID      string `json:"id"`
+					Text    string `json:"text"`
+					Request string `json:"request"`
 				}
 				if json.Unmarshal(sc.Bytes(), &m) != nil || m.Text == "" || (m.ID != "" && seen[m.ID]) {
 					continue
@@ -301,7 +370,7 @@ func (s *Server) listen(ctx context.Context) {
 					}
 					seen[m.ID] = true
 				}
-				s.reply(m.Text)
+				s.reply(m.Text, m.Request)
 			}
 			err = cmd.Wait()
 		}

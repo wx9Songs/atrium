@@ -148,7 +148,7 @@ func TestReply(t *testing.T) {
 		return c[0]
 	}
 
-	s.reply("1")
+	s.reply("1", "")
 	if got := said(); got != "现在没有在等你确认的请求" {
 		t.Fatalf("nothing waiting: %q", got)
 	}
@@ -158,18 +158,18 @@ func TestReply(t *testing.T) {
 	if got, want := said(), "需要你确认 · Build（m1）\nBash: make test\n回复 1 允许，2 拒绝，3 以后都允许"; got != want {
 		t.Fatalf("asked:\n got %q\nwant %q", got, want)
 	}
-	s.reply("什么")
+	s.reply("什么", "")
 	if got := said(); !strings.HasPrefix(got, "没看懂") || len(sentTo()) != 0 {
 		t.Fatalf("an unclear reply: %q", got)
 	}
-	s.reply(" 好的。")
+	s.reply(" 好的。", "")
 	if c := one("allow"); c["behavior"] != "allow" || c["request_id"] != "r1" || c["run_id"] != "a" || c["always"] != false {
 		t.Fatalf("allow: %v", c)
 	}
 	if got := said(); got != "已允许 · Build" {
 		t.Fatalf("after allowing: %q", got)
 	}
-	s.reply("1") // the same request is not answered twice
+	s.reply("1", "") // the same request is not answered twice
 	if got := said(); got != "现在没有在等你确认的请求" || len(sentTo()) != 0 {
 		t.Fatalf("a second reply: %q", got)
 	}
@@ -180,12 +180,12 @@ func TestReply(t *testing.T) {
 	s.runs.Create(Run{ID: "b", Machine: "m1", SessionID: "s2", Status: "running", Title: "Docs"})
 	ev("b", "permission", `{"request_id":"r3","tool_name":"Bash","input":{"command":"rm -rf /"},"suggestions":[{"type":"addRules"}]}`)
 	said()
-	s.reply("2")
+	s.reply("2", "")
 	if c := one("deny"); c["behavior"] != "deny" || c["request_id"] != "r3" {
 		t.Fatalf("deny: %v", c)
 	}
 	ev("b", "permission_done", `{"request_id":"r3"}`)
-	s.reply("3") // no "always" on offer for this one
+	s.reply("3", "") // no "always" on offer for this one
 	if c := one("always"); c["behavior"] != "allow" || c["request_id"] != "r2" || c["always"] != false {
 		t.Fatalf("always without suggestions: %v", c)
 	}
@@ -199,11 +199,11 @@ func TestReply(t *testing.T) {
 	if got := said(); got != want {
 		t.Fatalf("a question:\n got %q\nwant %q", got, want)
 	}
-	s.reply("2")
+	s.reply("2", "")
 	if got := said(); !strings.HasPrefix(got, "有 2 个问题") || len(sentTo()) != 0 {
 		t.Fatalf("one line for two questions: %q", got)
 	}
-	s.reply("1\n1, 3")
+	s.reply("1\n1, 3", "")
 	c := one("answers")
 	in, _ := json.Marshal(c["input"])
 	var got struct {
@@ -219,7 +219,7 @@ func TestReply(t *testing.T) {
 	}
 	ev("a", "permission_done", `{"request_id":"q1"}`)
 	ev("a", "permission", strings.Replace(q, "%s", "q2", 1))
-	s.reply("MySQL 吧\n9")
+	s.reply("MySQL 吧\n9", "")
 	in, _ = json.Marshal(one("own words")["input"])
 	json.Unmarshal(in, &got)
 	if got.Answers["Which database?"] != "MySQL 吧" || got.Answers["Which parts?"] != "9" {
@@ -227,8 +227,61 @@ func TestReply(t *testing.T) {
 	}
 	ev("a", "permission_done", `{"request_id":"q2"}`)
 	ev("a", "permission", strings.Replace(q, "%s", "q3", 1))
-	s.reply("0")
+	s.reply("0", "")
 	if c := one("skip"); c["behavior"] != "deny" || c["request_id"] != "q3" {
 		t.Fatalf("skip: %v", c)
+	}
+}
+
+// A button names the request it answers, whichever came last; pressed again it does nothing.
+func TestReplyByButton(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{DataDir: dir, Machines: map[string]*MachineConf{"m1": {}}}
+	cfg.path = filepath.Join(dir, "config.json")
+	s := newServer(cfg)
+	n := &notifier{conf: &NotifyConf{Command: []string{"true"}, Replies: []string{"true"}}, q: make(chan note, 32), watching: map[string]time.Time{}}
+	s.notify = n
+	ev := func(id, t, data string) {
+		s.applyRunEvent("m1", inEvent{RunID: id, T: t, TS: 1, Data: json.RawMessage(data)})
+	}
+	cmds := func() []string {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		out := []string{}
+		for _, raw := range s.mach.poll(ctx, "m1", 10*time.Millisecond) {
+			var m map[string]any
+			json.Unmarshal(raw, &m)
+			out = append(out, m["request_id"].(string)+" "+m["behavior"].(string))
+		}
+		return out
+	}
+	s.runs.Create(Run{ID: "a", Machine: "m1", SessionID: "s1", Status: "running", Title: "A"})
+	s.runs.Create(Run{ID: "b", Machine: "m1", SessionID: "s2", Status: "running", Title: "B"})
+	ev("a", "permission", `{"request_id":"r1","tool_name":"Bash","input":{"command":"ls"},"suggestions":[{"type":"addRules"}]}`)
+	ev("b", "permission", `{"request_id":"r2","tool_name":"AskUserQuestion","input":{"questions":[{"question":"Which?","options":[{"label":"Left"},{"label":"Right"}]}]}}`)
+	first, second := <-n.q, <-n.q
+	if b, _ := json.Marshal(first.Choices); first.Request != "r1" || string(b) != `[{"label":"Allow","reply":"1","style":"primary"},{"label":"Deny","reply":"2","style":"danger"},{"label":"Always allow","reply":"3"}]` {
+		t.Fatalf("choices of a permission request: %s %s", first.Request, b)
+	}
+	if b, _ := json.Marshal(second.Choices); second.Request != "r2" || string(b) != `[{"label":"Left","reply":"1"},{"label":"Right","reply":"2"},{"label":"Skip","reply":"0"}]` {
+		t.Fatalf("choices of a question: %s", b)
+	}
+	s.reply("1", "r1") // the earlier one, by its button
+	if c := cmds(); len(c) != 1 || c[0] != "r1 allow" {
+		t.Fatalf("a button of the earlier request: %v", c)
+	}
+	if x := <-n.q; x.Kind != "reply" || !x.OK || x.Request != "r1" || x.Text != "Allowed · A" {
+		t.Fatalf("what became of it: %+v", x)
+	}
+	s.reply("2", "r1") // pressed again
+	if x := <-n.q; x.OK || x.Text != "This request was already answered" || len(cmds()) != 0 {
+		t.Fatalf("pressed again: %+v", x)
+	}
+	s.reply("2", "r2")
+	if c := cmds(); len(c) != 1 || c[0] != "r2 allow" {
+		t.Fatalf("an option of the question: %v", c)
+	}
+	if x := <-n.q; x.Text != "Answered: Right · B" {
+		t.Fatalf("answered: %+v", x)
 	}
 }

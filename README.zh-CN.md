@@ -202,13 +202,14 @@ xattr -dr com.apple.quarantine /Applications/Atrium.app
 ```
 
 - `command` 不经过 shell 直接执行。`{text}` 是整条消息：发生了什么、会话标题、机器、一行详情、链接。`{head}`、`{title}`、`{detail}`、`{kind}`、`{machine}`、`{url}` 是其中各部分。同样的值也在环境变量里（`ATRIUM_TEXT` 等），整条消息还会写到标准输入，所以 `["curl", "-s", "--data-binary", "@-", "https://ntfy.sh/your-topic"]` 也可以。
+- 想自己排版消息的命令（比如带按钮的卡片），可以从 `{json}` 和 `ATRIUM_JSON` 拿到一个包含所有部分的 JSON：`kind`、`head`、`title`、`detail`、`machine`、`url`、`text`，可以回答的请求还有 `request`、`choices`（按钮文字和对应的回复）和 `hint`。回复行可以指明回答的是哪个请求：`{"text": "1", "request": "..."}`。
 - `url` 是手机访问这个页面的地址，填了之后消息末尾带上会话链接。
 - `on` 选择通知哪些情况：`"permission"`、`"done"`、`"error"` 中的若干个，不写就是全部。
 - `lang` 是 `"en"` 或 `"zh"`。
 - `replies` 让你在收到通知的地方直接回答。它是一条一直运行的命令，把你回复的内容逐行打印成 JSON：`{"text": "1"}`。这样权限请求会写明“回复 1 允许，2 拒绝”，提问会按编号列出选项，你的回复用来回答最新一个还在等待的请求。务必让这条命令只转交你本人的消息：谁能往里写，谁就能批准 agent 的请求。飞书的写法：`["lark-cli", "event", "consume", "im.message.receive_v1", "--as", "bot", "--jq", "select(.chat_type == \"p2p\" and .sender_id == \"ou_xxx\") | {id: .message_id, text: .content}"]`。
 - 你正看着 Atrium 页面时不发：页面可见、在前台，并且五分钟内操作过。`"always": true` 则照发不误。
 
-安装向导里 hub 的 systemd 单元不允许它访问外网，所以在那里直接调用外部服务的命令会失败。[scripts/notify-feishu.sh](scripts/notify-feishu.sh) 是为这种情况准备的一个独立小服务：hub 把消息放进一个目录，脚本负责发出去，并把你的回复写回来。
+安装向导里 hub 的 systemd 单元不允许它访问外网，所以在那里直接调用外部服务的命令会失败。[scripts/notify-feishu.py](scripts/notify-feishu.py) 是为这种情况准备的一个独立小服务：hub 把消息放进一个目录，脚本把它们做成带按钮的卡片发出去，并把你点的按钮或回复写回来。
 
 `atrium notify-test` 发一条测试消息。注意消息里有会话标题和 agent 回复的开头几句，它们会经过你的命令所用的那个服务。
 
