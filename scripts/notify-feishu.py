@@ -35,6 +35,7 @@ DIR = os.environ["ATRIUM_NOTIFY_DIR"]
 WHO = os.environ["FEISHU_USER_ID"]
 LARK = os.environ.get("LARK_CLI", "lark-cli")
 OUT, REPLIES = os.path.join(DIR, "out"), os.path.join(DIR, "replies")
+STATE = os.path.join(DIR, "cards.json")  # the cards still open, kept across a restart
 
 lock = threading.Lock()
 cards = {}    # request id -> the card as sent, to redraw once it is answered
@@ -53,6 +54,25 @@ def lark(*args, full=False):
         return r.returncode == 0, r.stdout if full and r.returncode == 0 else (r.stdout + r.stderr)[-400:]
     except Exception as e:  # a timeout, or lark-cli missing
         return False, str(e)
+
+
+def save_state():
+    """Call with the lock held."""
+    tmp = STATE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"cards": cards, "sent": sent, "pressed": pressed}, f, ensure_ascii=False)
+    os.replace(tmp, STATE)
+
+
+def load_state():
+    try:
+        with open(STATE) as f:
+            d = json.load(f)
+        cards.update(d.get("cards") or {})
+        sent.update(d.get("sent") or {})
+        pressed.update(d.get("pressed") or {})
+    except (OSError, ValueError):
+        pass
 
 
 def write_reply(obj):
@@ -168,6 +188,7 @@ def send(raw):
                 for old in list(cards)[:-100]:
                     cards.pop(old, None)
                     pressed.pop(old, None)
+                save_state()
         if not ok:
             log("the card was refused, sending text:", out)
             ok, out = lark("im", "+messages-send", "--as", "bot", "--user-id", WHO, "--text", n.get("text", ""))
@@ -197,7 +218,15 @@ def on_message(m):
 
 
 def on_button(m):
-    v = m.get("value") or {}
+    v = m.get("value") or {}  # a button's value arrives as a JSON string; a form's submit has none
+    if isinstance(v, str):
+        try:
+            v = json.loads(v)
+        except ValueError:
+            v = {}
+    if not isinstance(v, dict):
+        v = {}
+    log("a card came back:", m.get("tag"), "form" if m.get("form") else "")
     req = v.get("atrium")
     text = v.get("reply") if m.get("tag") == "button" else (m.get("input") or "").strip()
     if m.get("form"):
@@ -205,7 +234,9 @@ def on_button(m):
         with lock:
             req = sent.get(m.get("message"))
             n = cards.get(req) or {}
-        form, lines = json.loads(m["form"]), []
+        form, lines = m["form"], []
+        if isinstance(form, str):
+            form = json.loads(form)
         for i, q in enumerate(n.get("questions") or []):
             picked = form.get("q%d" % i) or ""
             if isinstance(picked, list):
@@ -213,6 +244,7 @@ def on_button(m):
             own = " ".join((form.get("o%d" % i) or "").split()).replace(";", ",").replace("；", "，")
             lines.append(own or picked)
         if not req or not lines:
+            log("a form came back for a card this script does not know")
             return
         if not all(lines):
             lark("im", "+messages-send", "--as", "bot", "--user-id", WHO, "--text",
@@ -225,6 +257,7 @@ def on_button(m):
         again = req in pressed
         pressed.setdefault(req, v.get("label") or text)
         n = cards.get(req)
+        save_state()
     write_reply({"id": m.get("id", ""), "text": text, "request": req})
     if n and not again and m.get("token"):
         ok, out = lark("api", "POST", "/open-apis/interactive/v1/card/update", "--as", "bot",
@@ -251,13 +284,14 @@ def watch_callbacks():
     buttons.set()
     log("card buttons are on")
     consume("card.action.trigger",
-            'select(.operator_id == "%s" and (.action_tag == "button" or .action_tag == "input")) | {id: .event_id, token: .token, tag: .action_tag, input: .input_value, form: .form_value, message: .message_id, value: (.action_value | fromjson?)}' % WHO,
+            'select(.operator_id == "%s" and (.action_tag == "button" or .action_tag == "input")) | {id: .event_id, token: .token, tag: .action_tag, input: .input_value, form: .form_value, message: .message_id, value: .action_value}' % WHO,
             on_button)
 
 
 def main():
     os.makedirs(OUT, exist_ok=True)
     open(REPLIES, "a").close()
+    load_state()
     for f in glob.glob(os.path.join(OUT, "*")):  # nothing from before this start is still news
         os.remove(f)
     threading.Thread(target=consume, daemon=True, args=(
