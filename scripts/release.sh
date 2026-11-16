@@ -29,7 +29,7 @@ for t in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do
   mkdir -p "$dir/bin" "$dir/scripts" "$dir/docs"
   GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$dir/bin/atrium" ./cmd/atrium
   GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$dir/bin/atrium-runner" ./cmd/atrium-runner
-  cp scripts/local-install.sh scripts/machine-install.sh scripts/server-install.sh scripts/atrium-machine "$dir/scripts/"
+  cp scripts/local-install.sh scripts/machine-install.sh scripts/server-install.sh scripts/atrium-machine scripts/notify-feishu.py "$dir/scripts/"
   cp docs/install.md "$dir/docs/"
   cp README.md README.zh-CN.md LICENSE NOTICE "$dir/"
   # COPYFILE_DISABLE keeps macOS from adding ._ files that Linux tar complains about.
