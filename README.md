@@ -38,13 +38,14 @@ Atrium is the fix I wanted: an *atrium* is the open court in the middle of a hou
 ## What you can do
 
 **See everything**
-- Every session from every machine in one sidebar: machine, then working folder, then sessions newest first. Or a flat list by day. The pencil on a machine's row renames it; that changes only the name shown.
+- Every session from every machine in one sidebar: the few you used last on top, then machine, working folder, and sessions newest first. Or a flat list by day. The pencil on a machine's row renames it; that changes only the name shown.
 - Full history with tool calls folded into tidy steps, and full-text search across all of it.
 - Folders and sessions nobody has touched for seven days fold themselves away, so the list stays about current work.
 - Usage on a status bar along the bottom of the window: how much of each agent's plan limit is used and when it resets, and the tokens of the last seven days by day, machine and model. The limits are what the `claude` and `codex` CLIs on your machines last saw; Atrium does not ask the services itself.
 
 **Keep working**
 - Type at the bottom of any session. The turn runs on the machine that owns it, output streams back live, and permission requests show up as buttons.
+- Away from the page, a run that needs your OK, has answered or failed can reach you as a notification, and you can answer the request right there (see [Notifications on your phone](#notifications-on-your-phone)).
 - Start a new session on any connected machine, in any folder: pick a recent one, browse, or type a path.
 - Choose the model and reasoning effort from the list that machine's own CLI reports.
 
@@ -58,7 +59,7 @@ Atrium is the fix I wanted: an *atrium* is the open court in the middle of a hou
 - A real terminal on the session's machine, as if you had SSHed in.
 - The session's folder as a file tree, with a small editor.
 
-It comes in English and Chinese, as a web page and as a small macOS app.
+It comes in English and Chinese, as a web page, as a small macOS app, and as an app on a phone's home screen.
 
 ## Quick start
 
@@ -130,7 +131,7 @@ The page opens on a short setup guide. It gives you the commands with your machi
 ```
 
 - **History** comes from the raw transcript files. [agentsview](https://github.com/kenn-io/agentsview) parses and indexes them; Atrium reads its API.
-- **Control** is a small runner on each machine. For every message you send it starts `claude -p --resume <id>` or `codex exec resume <id>` in the session's own folder, so the turn lands in the same native transcript.
+- **Control** is a small runner on each machine. For every message you send it starts `claude -p --resume <id>` or `codex exec resume <id>` in the session's own folder, so the turn lands in the same native transcript. A Claude process that its own background tasks keep alive takes the session's next message itself instead of a new one being started.
 - **Access** is by SSH tunnel. The hub and the archive bind to loopback. Each machine's key can write into its own folder on the server and open that one tunnel, nothing else.
 
 On one computer (setup A) the same three parts run side by side: the archive reads your transcripts where they already are, and there is no push and no tunnel.
@@ -149,7 +150,7 @@ Hover a message to see what you can do with it.
 | Open **Info** next to a conversation (⌘I) | How full the context window is and what fills it, the model and effort in use, MCP servers, what the last turn cost, and the background commands and monitors the agent started, each with a Stop button. While they run you can keep chatting: the next message goes to the same agent process, and when a task ends the agent is told and picks up from there. Claude answers these itself, also for a session that is not running (no message is sent, nothing is written); for Codex the context figure is read from its session file. |
 | Pick a **model** and **reasoning effort** | The list is the one the agent's own CLI reports on that machine, with the effort levels each model accepts. Effort has its own button next to the model. "Reload" in the model menu reads the list again. |
 | **Paste** a picture, **drop** files on the page, or use the paperclip | They go out with the message: saved on the machine the session runs on, in a folder of the runner's own, and the agent is told where. Up to 10 files of 25 MB each. The hub keeps a copy of the pictures for a month, so the conversation shows them on every device. |
-| Send while a run is in flight | The message is queued and goes out when the run ends. |
+| Send while a run is in flight | The message is queued and goes out when the run ends. A run that has answered and only waits for its background tasks does not hold the message box. |
 | **+** on a machine or folder in the sidebar | A new session there. On a machine, the folder menu opens so you can pick or type one. |
 
 Editing and trying again use what Claude Code's own rewind uses: `--resume <id> --resume-session-at <message>`. The session keeps its id, the replaced turns stay in the transcript as a branch it no longer follows, and `claude --resume` in a terminal picks up the new version. The first message of a session has nothing before it to go back to, so rewriting that one starts a new session instead.
@@ -189,6 +190,10 @@ xattr -dr com.apple.quarantine /Applications/Atrium.app
 
 To build it yourself: `make app`. See [app/README.md](app/README.md).
 
+## On a phone
+
+The page works in a phone's browser, and "Add to Home Screen" turns it into an app with its own icon. The page still listens on loopback only, so the phone has to come in through something that ends on the server: a VPN or proxy that runs there and connects to `127.0.0.1:3005` for you, or a TLS reverse proxy as in the [install guide](docs/install.md#access-from-anywhere-optional). Sign in with "Sign in on another device" under ⋯ at the bottom of the sidebar.
+
 ## Notifications on your phone
 
 The hub can run a command of yours when a run needs your OK, has answered, or failed. Anything that can send you a message works: a chat app's CLI, `curl` to ntfy or Bark, a mail command. Add a `notify` block to the hub's `config.json` and restart the hub:
@@ -201,14 +206,14 @@ The hub can run a command of yours when a run needs your OK, has answered, or fa
 ```
 
 - `command` runs without a shell. `{text}` is the whole message: what happened, the session's title, the machine, a line of detail, the link. `{head}`, `{title}`, `{detail}`, `{kind}`, `{machine}` and `{url}` are its parts. The same values are in the environment (`ATRIUM_TEXT` and so on), and the message is on standard input, so `["curl", "-s", "--data-binary", "@-", "https://ntfy.sh/your-topic"]` works too.
-- A command that lays the message out itself (a card with buttons, say) gets every part as one JSON object in `{json}` and `ATRIUM_JSON`: `kind`, `head`, `title`, `detail`, `machine`, `url`, `text`, and for a request that can be answered, `request`, `choices` (label and the reply that picks it) and `hint`. A reply line may name the request it answers: `{"text": "1", "request": "..."}`.
+- A command that lays the message out itself (a card with buttons, say) gets every part as one JSON object in `{json}` and `ATRIUM_JSON`: `kind`, `head`, `title`, `detail`, `machine`, `url`, `text`, and for a request that can be answered, `request`, `choices` (label and the reply that picks it), `questions` (each with its options, for a form), `free` (an answer in your own words is taken too) and `hint`. A reply line may name the request it answers: `{"text": "1", "request": "..."}`.
 - `url` is the page's address as your phone reaches it; the message then ends with a link to the session.
 - `on` picks what to tell about: any of `"permission"`, `"done"`, `"error"`. Leave it out for all three.
 - `lang` is `"en"` or `"zh"`.
 - `replies` lets you answer from where the notification arrived. It is a command that keeps running and prints what you write back, one JSON object per line: `{"text": "1"}`. A permission request then says "Reply 1 to allow, 2 to deny", a question lists its options by number, and your reply answers the latest request still waiting. Make sure the command passes on only your own messages: whoever can write to it can approve what your agents ask for. For Feishu/Lark: `["lark-cli", "event", "consume", "im.message.receive_v1", "--as", "bot", "--jq", "select(.chat_type == \"p2p\" and .sender_id == \"ou_xxx\") | {id: .message_id, text: .content}"]`.
 - Nothing is sent while an Atrium page is in front of you: visible, focused, and used in the last five minutes. `"always": true` sends anyway.
 
-The hub's systemd unit from the setup guide keeps it off the network, so a command that calls a service fails there. [scripts/notify-feishu.py](scripts/notify-feishu.py) is a small separate service for that case: the hub leaves messages in a folder, the script sends them as cards with buttons and writes back what you press or reply.
+The hub's systemd unit from the setup guide keeps it off the network, so a command that calls a service fails there. [scripts/notify-feishu.py](scripts/notify-feishu.py) is a small separate service for that case: the hub leaves messages in a folder, the script sends them as cards and writes back what you press or reply: Allow and Deny buttons for a permission request, a question's options as buttons with a field for your own answer, a form when there are several questions or several options can be picked. Its header says how to run it.
 
 `atrium notify-test` sends a test message. Mind that a message carries the session's title and the first lines of the agent's reply through whatever service your command uses.
 
@@ -217,7 +222,7 @@ The hub's systemd unit from the setup guide keeps it off the network, so a comma
 - **One writer per session.** If a session is running in a terminal or desktop client, stop it there before sending from Atrium, or the two will interleave in one transcript. Atrium warns when a session changed elsewhere moments ago.
 - **Other clients do not refresh live.** A message sent from Atrium is in the transcript at once, but an already-open desktop client shows it only after a restart.
 - **Sessions created elsewhere appear after about a minute** (the push interval).
-- **Permissions** default to whatever the machine's own settings say. Pick "ask me" in the message box to confirm each action from the page.
+- **Permissions** default to whatever the machine's own settings say. Pick "ask me" in the message box to confirm each action from the page, or from a notification if you set those up.
 - **Transcripts are plain text on the server.** They can contain secrets you pasted or the agent printed. Treat the server accordingly.
 - **It is for one person.** There are no user accounts: whoever can sign in sees everything.
 
@@ -229,7 +234,7 @@ The hub's systemd unit from the setup guide keeps it off the network, so a comma
 | `cmd/atrium-runner` | the per-machine runner |
 | `web/` | the page (React + Vite) |
 | `app/` | the macOS app (Swift) |
-| `scripts/` | install scripts: one computer, server, machine |
+| `scripts/` | install scripts (one computer, server, machine), the release build, and the Feishu/Lark notification service |
 | `devstack/` | a stand-in for everything (made-up sessions, fake `claude` and `codex`) for working on the page |
 
 To work on the page with nothing installed: `devstack/up.sh seed`, then `cd web && npm install && npx vite`, and open http://127.0.0.1:5199.

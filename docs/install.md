@@ -84,7 +84,8 @@ Configuration lives in `/srv/atrium/config.json` (secrets inside; mode 600):
 | `listen` | hub address, default `127.0.0.1:3005` |
 | `archive_url`, `archive_token` | where agentsview is and its bearer token |
 | `machines` | registered machines (hashed runner tokens) |
-| `labels` | display names, e.g. `{"laptop": "My MacBook"}` |
+| `labels` | display names, e.g. `{"laptop": "My MacBook"}`. The pencil on a machine's row in the sidebar writes these for you |
+| `notify` | a command to run when a run needs you, and one to read your answers from; see "Notifications on your phone" in the README |
 | `login_hint` | the command shown on the sign-in page for your setup |
 
 Run the `atrium` admin commands as the `atrium` user (`runuser -u atrium -- atrium …`) so the config keeps its owner.
@@ -136,7 +137,7 @@ Put that command in `login_hint` and the sign-in page will show it; the desktop 
 
 ## Access from anywhere (optional)
 
-Out of the box the page is reachable only from machines that have the tunnel. To use it from a phone or any network, put a TLS reverse proxy (Caddy, nginx) in front of `127.0.0.1:3005` on a domain you own, ideally behind a second login such as an auth proxy, and pass `--base https://your.domain` to `login-link`. Atrium sets the `Secure` cookie flag when it sees `X-Forwarded-Proto: https`.
+Out of the box the page is reachable only from machines that have the tunnel. A phone can come in through a VPN or proxy that runs on the server and connects to `127.0.0.1:3005` there; nothing new listens on the internet that way. Otherwise, to use it from a phone or any network, put a TLS reverse proxy (Caddy, nginx) in front of `127.0.0.1:3005` on a domain you own, ideally behind a second login such as an auth proxy, and pass `--base https://your.domain` to `login-link`. Atrium sets the `Secure` cookie flag when it sees `X-Forwarded-Proto: https`.
 
 ## Checking that it works
 

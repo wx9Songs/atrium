@@ -1,8 +1,9 @@
 // Takes a screenshot of a page in headless Chrome over the DevTools protocol, after
 // giving it time to load its data. This is how the pictures in docs/images are made:
 //   chrome --headless=new --remote-debugging-port=9341 --user-data-dir=/tmp/x --lang=en-US about:blank &
-//   node devstack/shoot.mjs 9341 'http://127.0.0.1:8791/#/setup' docs/images/setup-en.png 1360 1420
-const [port, url, out, w, h] = process.argv.slice(2)
+//   node devstack/shoot.mjs 9341 'http://127.0.0.1:8791/#/setup' docs/images/setup-en.png 1360 1480 en
+// The last argument is the page's language (en or zh); without it the browser's own decides.
+const [port, url, out, w, h, lang] = process.argv.slice(2)
 import fs from 'node:fs'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })).json()
@@ -15,6 +16,12 @@ const send = (method, params = {}) => new Promise((r) => { pending.set(++id, r);
 await send('Emulation.setDeviceMetricsOverride', { width: Number(w), height: Number(h), deviceScaleFactor: 2, mobile: false })
 await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })
 await send('Page.navigate', { url })
+if (lang) {
+  // The page remembers its language per browser: set it, then load again.
+  await sleep(800)
+  await send('Runtime.evaluate', { expression: `localStorage.setItem('atrium.lang', '${lang}')` })
+  await send('Page.reload')
+}
 await sleep(4500)
 const shot = await send('Page.captureScreenshot', { format: 'png' })
 fs.writeFileSync(out, Buffer.from(shot.data, 'base64'))
