@@ -32,7 +32,7 @@ import (
 	"time"
 )
 
-var version = "0.2.2"
+var version = "0.2.3"
 
 type Config struct {
 	Hub   string `json:"hub"`   // e.g. http://127.0.0.1:13005 (through the SSH tunnel)
