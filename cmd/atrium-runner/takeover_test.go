@@ -44,8 +44,9 @@ func drain(r *Runner) []outEvent {
 	}
 }
 
-// A Claude process that its background tasks keep alive takes the session's
-// next message: at once when the agent is idle, after the turn when it is not.
+// A Claude process takes the session's next message at once: when its
+// background tasks keep it alive after a turn, and in the middle of a turn,
+// which the message then joins. Only a waiting permission request holds it back.
 func TestTakeOver(t *testing.T) {
 	r := testRunner(t, false)
 	in := &sink{}
@@ -56,11 +57,12 @@ func TestTakeOver(t *testing.T) {
 		return Job{ID: id, Agent: "claude", NativeID: "s1", Prompt: prompt, Mode: mode, Model: model}
 	}
 
-	// Still on its first turn: nobody else may have the session.
-	p.turn = true
+	// Not yet started on its session: nobody else may have it.
+	p.native = ""
 	if got := p.take(msg("B", "hi", "edits", "opus")); got != "no" {
-		t.Fatalf("during the first turn: %q", got)
+		t.Fatalf("before the session is known: %q", got)
 	}
+	p.native = "s1"
 	// The turn is over, a background task keeps the process: the message goes straight in.
 	p.turn, p.turns, p.idle = false, 1, true
 	p.parts = map[string]any{"tasks": []string{"t1"}, "last": "x"}
@@ -83,23 +85,37 @@ func TestTakeOver(t *testing.T) {
 		t.Fatalf("written to the agent: %v", ls)
 	}
 
-	// While that turn is going, the next one waits; a second waiting one is refused.
-	if got := p.take(msg("C", "third", "ask", "haiku")); got != "later" {
-		t.Fatalf("during a later turn: %q", got)
+	// While that turn is going, a message joins it at once (same mode and model: only the message is written).
+	drain(r)
+	if got := p.take(msg("C", "third", "ask", "haiku")); got != "taken" {
+		t.Fatalf("during a turn: %q", got)
 	}
-	if got := p.take(msg("D", "fourth", "ask", "haiku")); got != "no" {
+	if ls = in.lines(); len(ls) != 4 || ls[3]["message"].(map[string]any)["content"] != "third" || p.runID() != "C" || !p.steered {
+		t.Fatalf("joined the turn: %v", ls)
+	}
+	evs = drain(r)
+	if evs[0].RunID != "B" || evs[0].T != "exit" || evs[1].RunID != "C" || evs[1].Data.(map[string]any)["state"] != "running" {
+		t.Fatalf("events when joining: %+v", evs)
+	}
+
+	// A permission request waits for an answer: the next message waits for the turn to end; a second one is refused.
+	p.pending["q1"] = pendingPerm{}
+	if got := p.take(msg("D", "fourth", "ask", "haiku")); got != "later" {
+		t.Fatalf("with a permission waiting: %q", got)
+	}
+	if got := p.take(msg("D2", "fifth", "ask", "haiku")); got != "no" {
 		t.Fatalf("with one already waiting: %q", got)
 	}
-	if len(in.lines()) != 3 || p.runID() != "B" {
+	if len(in.lines()) != 4 || p.runID() != "C" {
 		t.Fatal("a waiting message must not reach the agent yet")
 	}
-	// Same mode and model: only the message is written.
+	delete(p.pending, "q1")
 	p.mu.Lock()
 	next := p.next
 	p.next, p.turn = nil, false
 	p.mu.Unlock()
-	p.handOver(*next)
-	if ls = in.lines(); len(ls) != 4 || ls[3]["message"].(map[string]any)["content"] != "third" || p.runID() != "C" {
+	p.handOver(*next, false)
+	if ls = in.lines(); len(ls) != 5 || ls[4]["message"].(map[string]any)["content"] != "fourth" || p.runID() != "D" || p.steered {
 		t.Fatalf("after the turn: %v", ls)
 	}
 

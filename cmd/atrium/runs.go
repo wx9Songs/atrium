@@ -21,6 +21,10 @@ type PermReq struct {
 	Description string          `json:"description,omitempty"`
 	Suggestions json.RawMessage `json:"suggestions,omitempty"`
 	BlockedPath string          `json:"blocked_path,omitempty"`
+	// Reason is why the agent asks; ReasonType "safetyCheck" means it asks even
+	// when everything is allowed (Claude Code's own checks, such as a dangerous rm).
+	Reason     string `json:"reason,omitempty"`
+	ReasonType string `json:"reason_type,omitempty"`
 }
 
 type Run struct {

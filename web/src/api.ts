@@ -83,6 +83,9 @@ export type PermReq = {
   description?: string
   suggestions?: any
   blocked_path?: string
+  /** Why the agent asks; reason_type "safetyCheck": it asks even when everything is allowed. */
+  reason?: string
+  reason_type?: string
 }
 
 export type Run = {
@@ -123,7 +126,7 @@ export type ContextUse = {
   skills?: { count?: number; tokens?: number }
   mcp_tools?: { server: string; tools: number; loaded: number; tokens: number }[]
 }
-export type BgTask = { id: string; type: string; description: string; status: string; started?: number; ended?: number; summary?: string }
+export type BgTask = { id: string; type: string; description: string; status: string; started?: number; ended?: number; summary?: string; output?: boolean }
 /** The Info panel's data: from a run in flight (by part), or read from the session's machine. */
 export type SessionInfo = {
   context?: ContextUse
@@ -302,6 +305,8 @@ export const api = {
     }),
   /** Have a machine's runner ask its agents again for their models and commands. */
   sessionInfo: (id: string) => req<SessionInfo>('/api/session-info?id=' + enc(id)),
+  /** The end of what a background task has printed so far (up to 64 KB). */
+  taskOutput: (runId: string, taskId: string) => req<{ text: string; size: number; cut: boolean }>(`/api/runs/${enc(runId)}/task-output?task=${enc(taskId)}`),
   stopTask: (runId: string, taskId: string) => req<{ ok: boolean }>(`/api/runs/${enc(runId)}/stop-task`, { method: 'POST', body: { task_id: taskId } }),
   /** Rename a machine as the page shows it; an empty label goes back to its own name. */
   machineLabel: (machine: string, label: string) => req<{ machines: Machine[] }>(`/api/machines/${enc(machine)}/label`, { method: 'POST', body: { label } }),

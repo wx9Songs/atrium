@@ -80,6 +80,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/runs/{id}/permission", b(s.handlePermission))
 	mux.HandleFunc("POST /api/runs/{id}/stop", b(s.handleStop))
 	mux.HandleFunc("POST /api/runs/{id}/stop-task", b(s.handleStopTask))
+	mux.HandleFunc("GET /api/runs/{id}/task-output", b(s.handleTaskOutput))
 	mux.HandleFunc("GET /api/session-info", b(s.handleSessionInfo))
 	mux.HandleFunc("POST /api/presence", b(s.handlePresence))
 	mux.HandleFunc("POST /api/ls", b(s.handleLs))

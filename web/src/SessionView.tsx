@@ -594,6 +594,7 @@ export function SessionView({
               : t(`回复 ${mlabel} 上的 ${agentName}…`, `Reply to ${agentName} on ${mlabel}…`)
         }
         busy={working && !branch}
+        steer={session.agent === 'claude' && hasFeature(machine, 'steer') && !branch && active?.status !== 'permission'}
         blocked={blocked}
         prefs={prefs}
         machine={machine}
@@ -807,6 +808,9 @@ function PermissionCard({ run, perm }: { run: Run; perm: PermReq }) {
     <div className="perm">
       <div className="perm-head"><Icon name="shield" size={16} />{t('需要你确认：', 'Needs your OK: ')}{v.label}</div>
       {perm.description && <div className="perm-desc">{perm.description}</div>}
+      {perm.reason_type === 'safetyCheck' ? (
+        <div className="perm-why"><Icon name="alert" size={13} />{t('Claude Code 自带的安全检查，选了“全部允许”也会问：', 'A safety check of Claude Code itself, which asks even when everything is allowed: ')}{perm.reason}</div>
+      ) : perm.reason ? <div className="perm-why"><Icon name="alert" size={13} />{perm.reason}</div> : null}
       {cmd ? (
         <pre className="pre cmd">{cmd}</pre>
       ) : v.kind === 'edit' || v.kind === 'write' ? (

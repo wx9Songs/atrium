@@ -40,7 +40,7 @@ Atrium is the fix I wanted: an *atrium* is the open court in the middle of a hou
 **See everything**
 - Every session from every machine in one sidebar: the few you used last on top, then machine, working folder, and sessions newest first. Or a flat list by day. The pencil on a machine's row renames it; that changes only the name shown.
 - Full history with tool calls folded into tidy steps, and full-text search across all of it.
-- Folders and sessions nobody has touched for seven days fold themselves away, so the list stays about current work.
+- Machines are listed in the order you last used them. Under each, folders nobody has touched for seven days wait behind "more folders", and old sessions fold away, so the list stays about current work.
 - Usage on a status bar along the bottom of the window: how much of each agent's plan limit is used and when it resets, and the tokens of the last seven days by day, machine and model. The limits are what the `claude` and `codex` CLIs on your machines last saw; Atrium does not ask the services itself.
 
 **Keep working**
@@ -147,10 +147,10 @@ Hover a message to see what you can do with it.
 | **Fork** (under any reply, or the button in the header) | The view is cut back to that point; your next message starts the new session. |
 | **Side chat** (`⌘.`) | A panel on the right with a fork of the session as it is now. Ask what you like; the main session never sees it. |
 | Type **`/`** | A menu of commands. Atrium's own run right away. The rest come from the Claude Code CLI on that machine and are sent to it as a message. |
-| Open **Info** next to a conversation (⌘I) | How full the context window is and what fills it, the model and effort in use, MCP servers, what the last turn cost, and the background commands and monitors the agent started, each with a Stop button. While they run you can keep chatting: the next message goes to the same agent process, and when a task ends the agent is told and picks up from there. Claude answers these itself, also for a session that is not running (no message is sent, nothing is written); for Codex the context figure is read from its session file. |
+| Open **Info** next to a conversation (⌘I) | How full the context window is and what fills it, the model and effort in use, MCP servers, what the last turn cost, and the background commands and monitors the agent started, each with a Stop button; click a command to see what it has printed, followed live while it runs. While they run you can keep chatting: the next message goes to the same agent process, and when a task ends the agent is told and picks up from there. Claude answers these itself, also for a session that is not running (no message is sent, nothing is written); for Codex the context figure is read from its session file. |
 | Pick a **model** and **reasoning effort** | The list is the one the agent's own CLI reports on that machine, with the effort levels each model accepts. Effort has its own button next to the model. "Reload" in the model menu reads the list again. |
 | **Paste** a picture, **drop** files on the page, or use the paperclip | They go out with the message: saved on the machine the session runs on, in a folder of the runner's own, and the agent is told where. Up to 10 files of 25 MB each. The hub keeps a copy of the pictures for a month, so the conversation shows them on every device. |
-| Send while a run is in flight | The message is queued and goes out when the run ends. A run that has answered and only waits for its background tasks does not hold the message box. |
+| Send while a run is in flight | With Claude Code the message goes in at once and the agent sees it after the tool call under way, within the same turn, as when you type into Claude Code while it works. With Codex it is queued and goes out when the run ends. Either way, ⌘Enter (or "Send now" on a queued message) stops the turn and sends it right away. A run that has answered and only waits for its background tasks does not hold the message box. |
 | **+** on a machine or folder in the sidebar | A new session there. On a machine, the folder menu opens so you can pick or type one. |
 
 Editing and trying again use what Claude Code's own rewind uses: `--resume <id> --resume-session-at <message>`. The session keeps its id, the replaced turns stay in the transcript as a branch it no longer follows, and `claude --resume` in a terminal picks up the new version. The first message of a session has nothing before it to go back to, so rewriting that one starts a new session instead.
@@ -222,6 +222,7 @@ The hub's systemd unit from the setup guide keeps it off the network, so a comma
 - **One writer per session.** If a session is running in a terminal or desktop client, stop it there before sending from Atrium, or the two will interleave in one transcript. Atrium warns when a session changed elsewhere moments ago.
 - **Other clients do not refresh live.** A message sent from Atrium is in the transcript at once, but an already-open desktop client shows it only after a restart.
 - **Sessions created elsewhere appear after about a minute** (the push interval).
+- **"Allow everything" can still ask.** Claude Code runs some safety checks whatever the mode, for example before `rm -rf` on a path it cannot work out in advance (`rm -rf "$(…)"`). The request then says it comes from such a check. The terminal asks the same.
 - **Permissions** default to whatever the machine's own settings say. Pick "ask me" in the message box to confirm each action from the page, or from a notification if you set those up.
 - **Transcripts are plain text on the server.** They can contain secrets you pasted or the agent printed. Treat the server accordingly.
 - **It is for one person.** There are no user accounts: whoever can sign in sees everything.

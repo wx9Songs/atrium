@@ -565,6 +565,8 @@ ul.plain { margin: 6px 0 0; padding-left: 1.3em; color: var(--text-2); font-size
 .perm { border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line)); background: var(--amber-soft); border-radius: 14px; padding: 13px 15px; }
 .perm-head { display: flex; align-items: center; gap: 8px; font-weight: 620; color: var(--amber); }
 .perm-desc { margin-top: 6px; color: var(--text-2); font-size: 13.5px; }
+.perm-why { display: flex; gap: 6px; align-items: flex-start; margin: 2px 0 8px; font-size: 12.5px; line-height: 1.5; color: var(--text-2); }
+.perm-why svg { flex: none; margin-top: 3px; color: var(--text-3); }
 .perm .pre, .perm .diff { background: var(--bg); }
 .perm-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .perm-err { margin-top: 8px; color: var(--red); font-size: 13px; }
@@ -928,6 +930,15 @@ button.att.pic { cursor: zoom-in; }
 .task-main b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-main span { font-size: 12px; color: var(--text-3); }
 .task .btn.sm { height: 26px; padding: 0 10px; font-size: 12.5px; }
+.task { flex-wrap: wrap; }
+.task.has-out { cursor: pointer; }
+.task.has-out:hover { background: var(--hover); }
+.task-chev { color: var(--text-3); flex: none; }
+.task-out { flex-basis: 100%; cursor: auto; margin-top: 2px; }
+.task-out pre {
+  margin: 0; max-height: 320px; overflow: auto; padding: 8px 10px; border-radius: 7px; background: var(--code-bg, var(--side));
+  font: 11.5px/1.5 var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); white-space: pre-wrap; word-break: break-all; color: var(--text);
+}
 
 /* the side panel's left edge can be dragged */
 .pane-grip { position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; z-index: 5; cursor: col-resize; touch-action: none; }

@@ -173,13 +173,16 @@ function EffortSlider({ levels, value, onChange }: { levels: string[]; value: st
 }
 
 export function Composer({
-  draftKey, placeholder, busy: running, blocked, prefs, machine, agent, appCommands = [], onSend, onStop, onShell, before, autoFocus, compact, focusSignal, menusDown,
+  draftKey, placeholder, busy: running, steer, blocked, prefs, machine, agent, appCommands = [], onSend, onStop, onShell, before, autoFocus, compact, focusSignal, menusDown,
 }: {
   /** Drafts and the queued message are remembered under this key. */
   draftKey: string
   placeholder: string
   /** A run is in flight: Enter queues instead of sending, and the button stops it. */
   busy?: boolean
+  /** While a run is in flight a message can still go out: the agent sees it after the
+   *  tool call under way, within the same turn (Claude). Otherwise it is queued. */
+  steer?: boolean
   /** When set, the box is replaced by this explanation (view-only sessions). */
   blocked?: string
   prefs: RunPrefs
@@ -421,7 +424,7 @@ export function Composer({
   }
 
   const isShell = !!onShell && text.startsWith('!') && text.length > 1
-  const send = async () => {
+  const send = async (now = false) => {
     const typed = text.trim()
     if ((!typed && !files.length) || sending || blocked) return
     if (isShell) {
@@ -441,9 +444,11 @@ export function Composer({
     if (running && queued) return
     const prompt = await attach(typed)
     if (prompt === null) return
-    if (running) {
+    if (running && (!steer || now)) {
       setQueued(prompt)
       setText('')
+      // "Send now": stop the turn; the queued message goes out as soon as it has stopped.
+      if (now) onStop?.()
       return
     }
     setText('')
@@ -471,6 +476,7 @@ export function Composer({
           <div className="queued">
             <Icon name="clock" size={14} />
             <span className="q-text">{t('排队中，当前这轮结束后发送：', 'Queued, goes out when this run ends: ')}{queued}</span>
+            {running && onStop && <button className="linkbtn" onClick={() => onStop()} title={t('停止当前这一轮，然后马上发出', 'Stop the turn under way, then send it right away')}>{t('立即发送', 'Send now')}</button>}
             <button className="linkbtn" onClick={() => { setText((cur) => cur || queued); setQueued('') }}>{t('取回', 'Take back')}</button>
           </div>
         )}
@@ -528,7 +534,7 @@ export function Composer({
               }
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
-                send()
+                send(running && (e.metaKey || e.ctrlKey))
               }
             }}
           />
@@ -539,11 +545,13 @@ export function Composer({
             <ModelPicker prefs={prefs} up={!menusDown} open={modelOpen} onOpenChange={setModelOpen} />
             <span className="grow" />
             {isShell ? <span className="keys shellhint"><Icon name="terminal" size={13} />{t('回车发到终端', 'Enter sends it to the terminal')}</span>
-              : !compact && <span className="keys">{running ? t('回车排队', 'Enter to queue') : <><kbd>/</kbd>{t(' 命令', ' commands')}</>}</span>}
+              : !compact && <span className="keys" title={running ? t('⌘回车：停止当前这一轮，马上发出', '⌘Enter: stop the turn under way and send it right away') : undefined}>
+                {running ? (steer ? t('回车插入（下一步看到）', 'Enter: it sees it next step') : t('回车排队', 'Enter to queue')) : <><kbd>/</kbd>{t(' 命令', ' commands')}</>}
+              </span>}
             {running && !text.trim() && !files.length ? (
               <button className="sendbtn stop" onClick={onStop} title={t('停止', 'Stop')}><Icon name="stop" size={14} /></button>
             ) : (
-              <button className="sendbtn" onClick={send} disabled={(!text.trim() && !files.length) || sending || (running && !!queued)} title={running ? t('排队', 'Queue') : t('发送', 'Send')}>
+              <button className="sendbtn" onClick={() => send()} disabled={(!text.trim() && !files.length) || sending || (running && !!queued)} title={running ? (steer ? t('发送：在它下一步时看到', 'Send: it sees it at its next step') : t('排队', 'Queue')) : t('发送', 'Send')}>
                 {sending ? <Spinner size={13} /> : <Icon name="send" size={17} />}
               </button>
             )}

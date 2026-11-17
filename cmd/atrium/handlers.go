@@ -262,7 +262,13 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 		// A run whose agent is idle and only waits for its background tasks does not hold the session.
 		busy := s.runs.List(func(x *Run) bool { return x.SessionID == run.SessionID && !terminal(x.Status) && !x.Background })
-		if len(busy) > 0 {
+		// Claude takes a message in the middle of a turn, as it does when one is typed into
+		// it then: the runner passes it on, and the agent sees it after the tool call under way.
+		steer := body.Rewind == nil && run.Agent == "claude" && s.mach.supports(run.Machine, "steer")
+		for _, x := range busy {
+			steer = steer && x.Status != "queued"
+		}
+		if len(busy) > 0 && !steer {
 			writeErr(w, http.StatusConflict, L(r, "这个会话正在运行中，请等它结束或先停止", "This session is running. Wait for it to finish or stop it first"))
 			return
 		}
@@ -437,6 +443,33 @@ func (s *Server) handleSessionInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, err := s.mach.rpc(r.Context(), sess.Machine, map[string]any{"type": "session_info", "agent": sess.Agent, "native_id": sess.NativeID}, 60*time.Second)
+	if err != nil {
+		writeErr(w, http.StatusConflict, errText(r, err))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write(data)
+}
+
+// handleTaskOutput reads what a background task has printed so far, from the
+// file its CLI writes on the run's machine.
+func (s *Server) handleTaskOutput(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.runs.Get(r.PathValue("id"))
+	task := r.URL.Query().Get("task")
+	if !ok || task == "" || len(task) > 100 {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	if !s.mach.online(run.Machine) {
+		writeErr(w, http.StatusConflict, L(r, "这台机器现在不在线", "This machine is offline"))
+		return
+	}
+	if !s.mach.supports(run.Machine, "taskout") {
+		writeErr(w, http.StatusConflict, L(r, "这台机器上的 runner 版本较旧，还不能读取任务输出", "The runner on this machine is too old to show a task's output"))
+		return
+	}
+	data, err := s.mach.rpc(r.Context(), run.Machine, map[string]any{"type": "task_output", "task_id": task}, 20*time.Second)
 	if err != nil {
 		writeErr(w, http.StatusConflict, errText(r, err))
 		return

@@ -338,7 +338,7 @@ func (r *Runner) hello() error {
 		"shell":  r.cfg.AllowShell,
 		"terms":  terms,
 		// What this runner understands, so the page only offers what will work.
-		"features": []string{"fork", "caps", "term", "files", "effort", "rewind", "limits", "upload", "info", "bgchat"},
+		"features": []string{"fork", "caps", "term", "files", "effort", "rewind", "limits", "upload", "info", "bgchat", "steer", "taskout"},
 	}
 	if err := r.request("POST", "/api/runner/hello", body, nil, 30*time.Second); err != nil {
 		return err
@@ -399,6 +399,9 @@ func (r *Runner) handle(raw json.RawMessage) {
 		}
 	case "session_info":
 		data, err := r.sessionInfo(c.Agent, c.NativeID)
+		r.reply(c.ID, data, err)
+	case "task_output":
+		data, err := taskOutput(c.TaskID)
 		r.reply(c.ID, data, err)
 	case "ls":
 		data, err := r.ls(c.Path)

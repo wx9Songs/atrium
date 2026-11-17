@@ -48,6 +48,7 @@ type proc struct {
 	turns     int     // turns finished
 	idle      bool    // told the hub that only background tasks keep it (the "bg" event)
 	next      *Job    // a message waiting for the turn under way to end
+	steered   bool    // a message went in while the turn was going (see take)
 	mode      string  // permission mode, as the CLI names it
 	model     string  // the model last asked for ("" = the machine's default)
 	resultErr string  // how the last turn failed, if it did
@@ -83,41 +84,51 @@ var claudeModes = map[string]string{"ask": "default", "plan": "plan", "edits": "
 // take hands this process the session's next message, if it can have it:
 // "taken" (it is the process's run now), "later" (it will be when the turn
 // under way ends), "closing" (the process is on its way out: start a new one
-// once it is gone) or "no" (its first turn is still going).
+// once it is gone) or "no" (it cannot take it: not yet started on the session,
+// or a message already waits).
+//
+// A message that comes while the agent is working goes in at once, like one
+// typed into Claude Code during a turn: the CLI shows it to the agent after
+// the tool call under way, within the same turn. Only while a permission
+// request waits for an answer does it wait for the turn to end.
 func (p *proc) take(job Job) string {
 	p.mu.Lock()
 	switch {
-	case p.job.Agent != "claude" || p.turns == 0 || job.Fork || job.Rewind || job.IsNew:
+	case p.job.Agent != "claude" || p.native == "" || job.Fork || job.Rewind || job.IsNew:
 		p.mu.Unlock()
 		return "no"
 	case p.stdin == nil || p.stdinClosed || p.stopped:
 		p.mu.Unlock()
 		return "closing"
-	case p.turn || p.next != nil:
-		if p.next != nil {
-			p.mu.Unlock()
-			return "no" // one waiting message is enough; the hub does not send two
-		}
+	case p.next != nil:
+		p.mu.Unlock()
+		return "no" // one waiting message is enough
+	case p.turn && len(p.pending) > 0:
 		p.next = &job
 		p.mu.Unlock()
 		return "later"
 	}
+	steer := p.turn
 	p.mu.Unlock()
-	p.handOver(job)
+	p.handOver(job, steer)
 	return "taken"
 }
 
 // handOver ends the run the process reported to and makes it job's: the Info
 // panel's parts carry over, mode and model follow the new message, and the
-// message goes to the agent.
-func (p *proc) handOver(job Job) {
+// message goes to the agent. steer: the agent is in the middle of a turn, which
+// the message joins.
+func (p *proc) handOver(job Job, steer bool) {
 	p.mu.Lock()
 	old := p.id
 	if old == "" {
 		old = p.job.ID
 	}
 	failed := p.resultErr
-	p.id, p.turn, p.idle, p.next = job.ID, true, false, nil
+	if steer {
+		failed = "" // the turn goes on under the new run
+	}
+	p.id, p.turn, p.idle, p.next, p.steered = job.ID, true, false, nil, steer
 	p.resultErr, p.spentMs, p.steps = "", 0, 0
 	parts := map[string]any{}
 	for k, v := range p.parts {
@@ -146,7 +157,11 @@ func (p *proc) handOver(job Job) {
 		exit["error"], exit["error_zh"] = failed, failed
 	}
 	r.emit(old, "exit", exit)
-	r.emit(job.ID, "status", map[string]any{"state": "starting", "started_ts": time.Now().UnixMilli()})
+	state := "starting"
+	if steer {
+		state = "running"
+	}
+	r.emit(job.ID, "status", map[string]any{"state": state, "started_ts": time.Now().UnixMilli()})
 	if len(parts) > 0 {
 		r.emit(job.ID, "info", parts)
 	}
@@ -587,6 +602,8 @@ func (p *proc) runClaude() error {
 					"request_id": id, "tool_name": str(req, "tool_name"), "input": req["input"],
 					"description": str(req, "description"), "suggestions": req["permission_suggestions"],
 					"blocked_path": str(req, "blocked_path"),
+					// Why it asks: a rule, or a safety check that asks even when everything is allowed.
+					"reason": clipRunes(str(req, "decision_reason"), 300), "reason_type": str(req, "decision_reason_type"),
 				})
 			} else {
 				// A request this runner does not implement: answer so the CLI does not wait forever.
@@ -661,6 +678,17 @@ func (p *proc) runClaude() error {
 			if s := slimClaude(m); s != nil {
 				r.emit(p.runID(), "agent", s)
 			}
+			// The result of a background command says where its output goes.
+			if str(m, "type") == "user" {
+				msg, _ := m["message"].(map[string]any)
+				blocks, _ := msg["content"].([]any)
+				for _, b := range blocks {
+					bm, _ := b.(map[string]any)
+					if str(bm, "type") == "tool_result" && p.tasks.noteResult(str(bm, "tool_use_id"), resultText(bm["content"])) {
+						p.info("tasks", p.tasks.list())
+					}
+				}
+			}
 			if time.Since(askedCtx) > 30*time.Second {
 				ask("ctx", "get_context_usage")
 			}
@@ -697,9 +725,13 @@ func (p *proc) runClaude() error {
 			spent, steps := p.spentMs, p.steps
 			next := p.next
 			p.next = nil
+			// A message that went in late in the turn may not have reached the agent
+			// yet; the CLI then starts a turn of its own for it right away.
+			steered := p.steered
+			p.steered = false
 			// Nothing keeps the process: no message waiting, no background task. Decided
 			// and done under the lock, so that a message arriving now sees it is leaving.
-			leave := next == nil && p.tasks.running() == 0
+			leave := next == nil && p.tasks.running() == 0 && !steered
 			if leave && p.stdin != nil && !p.stdinClosed {
 				p.stdinClosed = true
 				p.stdin.Close()
@@ -713,8 +745,12 @@ func (p *proc) runClaude() error {
 			switch {
 			case next != nil:
 				// A message came in while this turn was going: it is the process's run from here.
-				p.handOver(*next)
+				p.handOver(*next, false)
 			case leave:
+			case steered && p.tasks.running() == 0:
+				// Close unless a turn for that message begins in the next few seconds.
+				seen := atomic.LoadInt64(&p.activity)
+				time.AfterFunc(4*time.Second, func() { p.closeIfIdle(seen) })
 			default:
 				// Background tasks keep the CLI up; it will tell the agent when they end.
 				// Its input stays open, so a task can be stopped and the next message can

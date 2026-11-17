@@ -4,7 +4,7 @@
 // from the run (the runner asks the agent as it works); for a session at rest
 // they are read from its machine when the tab is opened.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { api, Machine, Run, Session, SessionInfo } from './api'
+import { api, BgTask, Machine, Run, Session, SessionInfo } from './api'
 import { runsOf } from './derive'
 import { AgentIcon, Icon, Spinner } from './icons'
 import { isTerminal, useStore } from './store'
@@ -87,6 +87,7 @@ export function InfoPane({ session, machine }: { session: Session; machine?: Mac
   const last = live.last
   const mode = modeOptions(session.agent).find((o) => o.value === run?.mode)
 
+  const [shown, setShown] = useState('') // the task whose output is open
   const stopTask = async (id: string) => {
     if (!run) return
     try { await api.stopTask(run.id, id) } catch (e: any) { toast(e.message || t('没有停下来', 'Could not stop it')) }
@@ -172,7 +173,9 @@ export function InfoPane({ session, machine }: { session: Session; machine?: Mac
             {tasks.map((x) => {
               const on = x.status === 'running' && active
               return (
-                <div key={x.id} className={'task' + (on ? ' on' : '')}>
+                <div key={x.id} className={'task' + (on ? ' on' : '') + (x.output ? ' has-out' : '') + (shown === x.id ? ' open' : '')}
+                  onClick={x.output && run ? () => setShown(shown === x.id ? '' : x.id) : undefined}
+                  title={x.output ? t('点击查看输出', 'Click to see its output') : undefined}>
                   <span className="task-st">{on ? <Spinner size={12} /> : <Icon name={x.status === 'completed' ? 'check' : x.status === 'running' ? 'clock' : 'x'} size={13} />}</span>
                   <div className="task-main">
                     <b title={x.summary || x.description}>{x.description || x.id}</b>
@@ -183,7 +186,9 @@ export function InfoPane({ session, machine }: { session: Session; machine?: Mac
                       {!on && x.started && x.ended ? ' · ' + span(x.ended - x.started) : ''}
                     </span>
                   </div>
-                  {on && <button type="button" className="btn sm" onClick={() => stopTask(x.id)}>{t('停止', 'Stop')}</button>}
+                  {on && <button type="button" className="btn sm" onClick={(e) => { e.stopPropagation(); stopTask(x.id) }}>{t('停止', 'Stop')}</button>}
+                  {x.output && <Icon name={shown === x.id ? 'down' : 'right'} size={12} className="task-chev" />}
+                  {shown === x.id && run && <TaskOutput runId={run.id} task={x} live={on} />}
                 </div>
               )
             })}
@@ -231,6 +236,48 @@ export function InfoPane({ session, machine }: { session: Session; machine?: Mac
           ) : null}
         </section>
       )}
+    </div>
+  )
+}
+
+// What a background task has printed so far: the end of its output file, read
+// again every two seconds while it runs.
+function TaskOutput({ runId, task, live }: { runId: string; task: BgTask; live: boolean }) {
+  const [out, setOut] = useState<{ text: string; cut: boolean } | null>(null)
+  const [err, setErr] = useState('')
+  const box = useRef<HTMLPreElement>(null)
+  const atEnd = useRef(true)
+  useEffect(() => {
+    let alive = true
+    let timer: number | undefined
+    const read = () => {
+      api.taskOutput(runId, task.id).then((d) => {
+        if (!alive) return
+        setOut(d)
+        setErr('')
+      }).catch((e) => alive && setErr(e.message || t('读不到输出', 'Could not read the output'))).finally(() => {
+        if (alive && live) timer = window.setTimeout(read, 2000)
+      })
+    }
+    read()
+    return () => { alive = false; window.clearTimeout(timer) }
+  }, [runId, task.id, live])
+  useEffect(() => {
+    const el = box.current
+    if (el && atEnd.current) el.scrollTop = el.scrollHeight
+  }, [out])
+  return (
+    <div className="task-out" onClick={(e) => e.stopPropagation()}>
+      {err ? <div className="info-note error">{err}</div>
+        : !out ? <div className="info-note"><Spinner size={12} /> {t('读取中…', 'Reading…')}</div>
+          : (
+            <>
+              {out.cut && <div className="info-note">{t('只显示最后 64 KB', 'Showing the last 64 KB')}</div>}
+              <pre ref={box} onScroll={(e) => { const el = e.currentTarget; atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24 }}>
+                {out.text || t('（还没有输出）', '(no output yet)')}
+              </pre>
+            </>
+          )}
     </div>
   )
 }

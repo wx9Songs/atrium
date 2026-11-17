@@ -2,12 +2,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -121,6 +124,25 @@ type bgTask struct {
 	Started     int64  `json:"started,omitempty"`
 	Ended       int64  `json:"ended,omitempty"`
 	Summary     string `json:"summary,omitempty"`
+	// Output: the CLI keeps the task's output in a file, which the page can ask
+	// for (see taskOutput). The path itself stays on the machine.
+	Output    bool   `json:"output,omitempty"`
+	toolUseID string // the tool call that started it
+	file      string
+}
+
+// taskFiles maps task ids to their output files, also after the process that
+// ran them has ended, so the page can still show what a task printed.
+var taskFiles sync.Map
+
+var outputFileRe = regexp.MustCompile(`Output is being written to: (\S+\.output)`)
+
+func (t *bgTask) setFile(path string) {
+	if path == "" || !strings.HasSuffix(path, ".output") {
+		return
+	}
+	t.file, t.Output = path, true
+	taskFiles.Store(t.ID, path)
 }
 
 // taskBook follows the tasks a Claude process reports. The CLI names the ones
@@ -130,6 +152,7 @@ type taskBook struct {
 	order  []string
 	byID   map[string]*bgTask
 	active int
+	files  map[string]string // tool call id → output file, when the result came before the task
 }
 
 func (tb *taskBook) get(id string) *bgTask {
@@ -143,6 +166,79 @@ func (tb *taskBook) get(id string) *bgTask {
 		tb.order = append(tb.order, id)
 	}
 	return t
+}
+
+// noteResult reads where a background command writes its output from the result
+// of the tool call that started it, and reports whether that told anything new.
+func (tb *taskBook) noteResult(toolUseID, text string) bool {
+	mm := outputFileRe.FindStringSubmatch(text)
+	if toolUseID == "" || mm == nil {
+		return false
+	}
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	for _, t := range tb.byID {
+		if t.toolUseID == toolUseID {
+			if t.file == mm[1] {
+				return false
+			}
+			t.setFile(mm[1])
+			return true
+		}
+	}
+	if tb.files == nil {
+		tb.files = map[string]string{}
+	}
+	tb.files[toolUseID] = mm[1]
+	return false
+}
+
+// resultText is a tool result's text, given as a string or as text blocks.
+func resultText(c any) string {
+	switch v := c.(type) {
+	case string:
+		return v
+	case []any:
+		var sb strings.Builder
+		for _, part := range v {
+			if pm, _ := part.(map[string]any); str(pm, "type") == "text" {
+				sb.WriteString(str(pm, "text"))
+			}
+		}
+		return sb.String()
+	}
+	return ""
+}
+
+// taskOutput is the end of what a background task has printed so far.
+func taskOutput(taskID string) (map[string]any, error) {
+	v, ok := taskFiles.Load(taskID)
+	if !ok {
+		return nil, bi("这个任务的输出在这台机器上找不到（runner 重启过，或者它不写输出文件）", "This task's output cannot be found on this machine (the runner restarted, or the task writes no output file)")
+	}
+	f, err := os.Open(v.(string))
+	if err != nil {
+		return nil, bif("读不到任务输出：%v", "Could not read the task's output: %v", err)
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	const max = 64 << 10
+	from := st.Size() - max
+	if from < 0 {
+		from = 0
+	}
+	b := make([]byte, st.Size()-from)
+	n, _ := f.ReadAt(b, from)
+	b = b[:n]
+	if from > 0 { // start at a whole line and a whole character
+		if i := bytes.IndexByte(b, '\n'); i >= 0 && i < 4096 {
+			b = b[i+1:]
+		}
+	}
+	return map[string]any{"text": strings.ToValidUTF8(string(b), "�"), "size": st.Size(), "cut": from > 0}, nil
 }
 
 // apply takes one "system" event about tasks and reports whether anything changed.
@@ -177,6 +273,10 @@ func (tb *taskBook) apply(m map[string]any) bool {
 		}
 		t := tb.get(str(m, "task_id"))
 		t.Type, t.Description = str(m, "task_type"), clipRunes(str(m, "description"), 200)
+		t.toolUseID = str(m, "tool_use_id")
+		if f := tb.files[t.toolUseID]; f != "" && t.file == "" {
+			t.setFile(f)
+		}
 	case "task_updated":
 		t := tb.byID[str(m, "task_id")]
 		patch, _ := m["patch"].(map[string]any)
@@ -198,6 +298,7 @@ func (tb *taskBook) apply(m map[string]any) bool {
 			t.Status = s
 		}
 		t.Summary = clipRunes(str(m, "summary"), 300)
+		t.setFile(str(m, "output_file"))
 		if t.Ended == 0 && t.Status != "running" {
 			t.Ended = time.Now().UnixMilli()
 		}

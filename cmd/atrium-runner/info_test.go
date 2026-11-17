@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -135,4 +136,46 @@ func TestRealCodexInfo(t *testing.T) {
 		t.Fatalf("context: %s", b)
 	}
 	t.Logf("%s", b)
+}
+
+// Where a background command writes its output comes from the result of the
+// call that started it (or, at the end, from the CLI's notice), and the page
+// can read the end of it.
+func TestTaskOutput(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "tasks", "b1.output")
+	os.MkdirAll(filepath.Dir(out), 0o700)
+	os.WriteFile(out, []byte("line 1\nline 2\n"), 0o600)
+	var tb taskBook
+	tb.apply(map[string]any{"subtype": "task_started", "task_id": "b1", "tool_use_id": "tu1", "is_backgrounded": true, "task_type": "local_bash", "description": "loop"})
+	if tb.list()[0].Output {
+		t.Fatal("no output file known yet")
+	}
+	if !tb.noteResult("tu1", "Command running in background with ID: b1. Output is being written to: "+out+". You will be notified when it completes.") {
+		t.Fatal("the tool result names the file")
+	}
+	if l := tb.list(); !l[0].Output {
+		t.Fatalf("listed: %+v", l)
+	}
+	got, err := taskOutput("b1")
+	if err != nil || got["text"] != "line 1\nline 2\n" || got["cut"] != false {
+		t.Fatalf("output: %v %v", got, err)
+	}
+	// A result that came before the task was announced.
+	var tb2 taskBook
+	tb2.noteResult("tu2", "Output is being written to: "+filepath.Join(dir, "tasks", "b2.output")+".")
+	tb2.apply(map[string]any{"subtype": "task_started", "task_id": "b2", "tool_use_id": "tu2", "is_backgrounded": true})
+	if !tb2.list()[0].Output {
+		t.Fatal("matched the earlier result")
+	}
+	// A long output: only its end, from a whole line.
+	big := strings.Repeat("0123456789abcdef\n", 6000)
+	os.WriteFile(out, []byte(big+"last\n"), 0o600)
+	got, _ = taskOutput("b1")
+	if s := got["text"].(string); got["cut"] != true || len(s) > 64<<10 || !strings.HasSuffix(s, "last\n") || !strings.HasPrefix(s, "0123") {
+		t.Fatalf("long output: cut %v, %d bytes, starts %q", got["cut"], len(s), s[:10])
+	}
+	if _, err := taskOutput("nope"); err == nil {
+		t.Fatal("an unknown task")
+	}
 }
