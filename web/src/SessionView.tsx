@@ -75,8 +75,12 @@ export function SessionView({
   const archiveRef = useRef(archive)
   archiveRef.current = archive
 
+  // Whether the last look at which runs the archive covers had the archive's record of the
+  // session to go by. Opened from a link, the messages can arrive before the session list.
+  const coveredKnown = useRef(false)
   const coveredNow = useCallback(() => {
     const s = sessionRef.current
+    coveredKnown.current = !!s && !s.synthetic
     const set = new Set<string>()
     for (const r of runsRef.current) if (isTerminal(r) && runCoveredByArchive(r, s)) set.add(r.id)
     return set
@@ -142,6 +146,10 @@ export function SessionView({
       // A session that just reached the archive may carry a long inherited history (a fork): take its latest page.
       if (sigSeen.current[0] === 's' && sig[0] === 'a') load(undefined)
       else refreshTail()
+    } else if (!coveredKnown.current && sig[0] === 'a' && atLatest) {
+      // The archive's record arrived after the messages: look again, or every run of the
+      // session would be pieced together from its own events, and older ones are not sent.
+      refreshTail()
     }
     sigSeen.current = sig
   }, [sig, loading, atLatest, refreshTail, load])

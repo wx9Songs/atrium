@@ -78,7 +78,20 @@ type arcSession struct {
 	Cwd              string `json:"cwd"`
 	GitBranch        string `json:"git_branch"`
 	ParentSessionID  string `json:"parent_session_id"`
+	RelationshipType string `json:"relationship_type"`
 	SourceSessionID  string `json:"source_session_id"`
+}
+
+// listed tells which of the archive's sessions are conversations of their own.
+// The archive's default list leaves out "subagent" sessions, and since v0.47 it
+// counts as one any session whose prompts came in through the SDK and that has
+// no parent: every session Atrium starts or continues with a recent Claude
+// Code. So the list is read with its children and only these are dropped:
+// sessions under a parent, except continuations, which the default list shows
+// too. Forks found inside one transcript stay out; the page shows those
+// rewrites itself.
+func (x arcSession) listed() bool {
+	return x.ParentSessionID == "" || x.RelationshipType == "continuation"
 }
 
 // Session is the slim record the web page works with.
@@ -159,7 +172,7 @@ func (a *Archive) Sessions(ctx context.Context, force bool) ([]Session, string, 
 			Sessions   []arcSession `json:"sessions"`
 			NextCursor string       `json:"next_cursor"`
 		}
-		p := "/api/v1/sessions?limit=200&include_one_shot=true"
+		p := "/api/v1/sessions?limit=200&include_one_shot=true&include_children=true"
 		if cursor != "" {
 			p += "&cursor=" + url.QueryEscape(cursor)
 		}
@@ -173,7 +186,9 @@ func (a *Archive) Sessions(ctx context.Context, force bool) ([]Session, string, 
 			return nil, "", err
 		}
 		for _, x := range res.Sessions {
-			all = append(all, slimSession(x))
+			if x.listed() {
+				all = append(all, slimSession(x))
+			}
 		}
 		if res.NextCursor == "" || len(res.Sessions) == 0 {
 			break
