@@ -15,10 +15,10 @@ import { t, lang, setLang } from './i18n'
 
 type Group = { key: string; label: string; items: Session[]; old: boolean }
 type Folder = { key: string; cwd: string; label: string; items: Session[] }
-type MachineNode = { key: string; name: string; label: string; state: 'on' | 'off' | 'hist'; runner: boolean; server: boolean; folders: Folder[]; count: number }
+type MachineNode = { key: string; name: string; label: string; state: 'on' | 'off' | 'hist'; runner: boolean; server: boolean; folders: Folder[]; count: number; last: number }
 
 const FOLDER_ROWS = 5 // sessions listed under a folder before "show more"
-const MACHINE_FOLDERS = 8 // folders listed under a machine before "show more"
+const MACHINE_FOLDERS = 8 // folders listed under a machine before "show more" (only those used in the last seven days are)
 const STALE = 7 * 86400_000 // what has not been used for this long folds itself away
 const RECENT_ROWS = 5 // sessions listed under "Recent" above the machines
 const STALE_ROWS = 3 // sessions listed in a folder that was opened although nothing in it is recent
@@ -125,11 +125,13 @@ export function Sidebar({
         let node = byMachine.get(s.machine)
         if (!node) {
           const m = machines.find((x) => x.name === s.machine)
-          node = { key: 'm:' + s.machine, name: s.machine, label: machineLabel(machines, s.machine), state: m?.runner ? (m.online ? 'on' : 'off') : 'hist', runner: !!m?.runner, server: m?.info?.os === 'linux', folders: [], count: 0 }
+          node = { key: 'm:' + s.machine, name: s.machine, label: machineLabel(machines, s.machine), state: m?.runner ? (m.online ? 'on' : 'off') : 'hist', runner: !!m?.runner, server: m?.info?.os === 'linux', folders: [], count: 0, last: 0 }
           byMachine.set(s.machine, node)
           tree.push(node)
         }
         node.count++
+        // Something running there counts as being used now.
+        node.last = Math.max(node.last, live.has(s.id) ? now : ms(s.ended))
         const key = `f:${s.machine}|${s.cwd || ''}`
         let f = byFolder.get(key)
         if (!f) {
@@ -142,12 +144,11 @@ export function Sidebar({
       // A machine that can run sessions is listed even before it has any, so one can be started there.
       for (const m of machines) {
         if (!m.runner || byMachine.has(m.name) || (pickedSet.size && !pickedSet.has(m.name))) continue
-        tree.push({ key: 'm:' + m.name, name: m.name, label: m.label, state: m.online ? 'on' : 'off', runner: true, server: m.info?.os === 'linux', folders: [], count: 0 })
+        tree.push({ key: 'm:' + m.name, name: m.name, label: m.label, state: m.online ? 'on' : 'off', runner: true, server: m.info?.os === 'linux', folders: [], count: 0, last: 0 })
       }
-      // Machines keep a steady order: online first, then offline, then history-only; within that, the hub's own order.
-      const rank = { on: 0, off: 1, hist: 2 }
+      // Machines come in the order they were last used; one with no sessions yet goes last.
       const at = (name: string) => { const i = machines.findIndex((x) => x.name === name); return i < 0 ? 1e9 : i }
-      tree.sort((a, b) => rank[a.state] - rank[b.state] || at(a.name) - at(b.name))
+      tree.sort((a, b) => b.last - a.last || at(a.name) - at(b.name))
     } else {
       const map = new Map<string, Group>()
       for (const s of rest) {
@@ -336,8 +337,9 @@ export function Sidebar({
         })()}
         {tree.map((node) => {
           const mOpen = isOpen(node.key, true)
-          // Past the first few folders the rest wait behind "show more", except the one holding the open session.
-          const folders = full[node.key] ? node.folders : node.folders.filter((f, i) => i < MACHINE_FOLDERS || f.items.some((s) => s.id === currentId))
+          // Folders used in the last seven days are listed, up to a few; the rest wait behind
+          // "more folders", except one holding the open session or something running.
+          const folders = full[node.key] ? node.folders : node.folders.filter((f, i) => (i < MACHINE_FOLDERS && folderDefault(f)) || f.items.some((s) => s.id === currentId || live.has(s.id)))
           const moreFolders = node.folders.length - folders.length
           return (
             <div className="tree-m" key={node.key}>
