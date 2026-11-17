@@ -142,6 +142,19 @@ export function runCoveredByArchive(r: Run, s?: Session): boolean {
   return ms(s.ended) >= r.last_ts - 2000
 }
 
+/** What Enter does in the message box: "send" (Shift+Enter for a new line) or "newline"
+ *  (⌘/Ctrl+Enter sends). "auto", the default, sends on a computer and makes a new line on
+ *  a touch screen, where there is no Shift key to reach for. Set in the ⋯ menu. */
+export type EnterChoice = 'auto' | 'send' | 'newline'
+export const ENTER_KEY = 'atrium.enter'
+export function enterSends(): boolean {
+  let v: EnterChoice = 'auto'
+  try { v = JSON.parse(localStorage.getItem(ENTER_KEY) || '"auto"') } catch { /* default */ }
+  if (v === 'send') return true
+  if (v === 'newline') return false
+  return !matchMedia('(pointer: coarse)').matches
+}
+
 export function copyText(text: string) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text).catch(() => fallbackCopy(text))
   fallbackCopy(text)

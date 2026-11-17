@@ -192,7 +192,7 @@ To build it yourself: `make app`. See [app/README.md](app/README.md).
 
 ## On a phone
 
-The page works in a phone's browser, and "Add to Home Screen" turns it into an app with its own icon. The page still listens on loopback only, so the phone has to come in through something that ends on the server: a VPN or proxy that runs there and connects to `127.0.0.1:3005` for you, or a TLS reverse proxy as in the [install guide](docs/install.md#access-from-anywhere-optional). Sign in with "Sign in on another device" under ⋯ at the bottom of the sidebar.
+The page works in a phone's browser, and "Add to Home Screen" turns it into an app with its own icon. On a phone the list of sessions is the home screen: back from a conversation, or a swipe from the left edge, returns to it. Enter makes a new line there and the send button sends; on a computer Enter sends and Shift+Enter makes a new line. "Enter key" in the ⋯ menu changes this either way. The page still listens on loopback only, so the phone has to come in through something that ends on the server: a VPN or proxy that runs there and connects to `127.0.0.1:3005` for you, or a TLS reverse proxy as in the [install guide](docs/install.md#access-from-anywhere-optional). Sign in with "Sign in on another device" under ⋯ at the bottom of the sidebar.
 
 ## Notifications on your phone
 

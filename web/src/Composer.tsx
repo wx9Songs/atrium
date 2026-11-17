@@ -6,7 +6,7 @@ import { api, Machine, SlashCmd } from './api'
 import { Icon, Spinner } from './icons'
 import { setMachines } from './store'
 import { Dropdown, MenuItem, MenuLabel, MenuSep, toast } from './ui'
-import { hasFeature, imeKey, modeOptions, modelChoices } from './util'
+import { hasFeature, imeKey, modeOptions, modelChoices, enterSends } from './util'
 import { t } from './i18n'
 import { fileSize, MAX_ATTACH_COUNT, MAX_ATTACH_SIZE, pastedName, rememberPreview, withAttachments } from './attach'
 
@@ -510,6 +510,7 @@ export function Composer({
           <textarea
             ref={ta}
             rows={1}
+            enterKeyHint={enterSends() ? 'send' : 'enter'}
             autoFocus={autoFocus}
             value={text}
             placeholder={placeholder}
@@ -533,8 +534,15 @@ export function Composer({
                 if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setMenuOff(true); return }
               }
               if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                send(running && (e.metaKey || e.ctrlKey))
+                const mod = e.metaKey || e.ctrlKey
+                if (enterSends()) {
+                  e.preventDefault()
+                  send(running && mod)
+                } else if (mod) {
+                  // Enter makes a new line here; ⌘/Ctrl+Enter sends (and, during a turn, sends now).
+                  e.preventDefault()
+                  send(running)
+                }
               }
             }}
           />

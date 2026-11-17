@@ -10,7 +10,7 @@ import { AgentTag, Icon, Logo, Spinner } from './icons'
 import { setMachines, setMeta, signOut, startIn, useStore } from './store'
 import { UsageLine } from './Usage'
 import { Dropdown, kbd, MenuItem, MenuLabel, MenuSep, Segmented, toast, usePersisted } from './ui'
-import { agentName, copyText, displayTitle, folderName, imeKey, machineLabel, ms, resumeCommand, shortTime, timeBucket } from './util'
+import { agentName, copyText, displayTitle, ENTER_KEY, EnterChoice, folderName, imeKey, machineLabel, ms, resumeCommand, shortTime, timeBucket } from './util'
 import { t, lang, setLang } from './i18n'
 
 type Group = { key: string; label: string; items: Session[]; old: boolean }
@@ -36,6 +36,8 @@ export function Sidebar({
   onTheme: (t: ThemeChoice) => void
   onHide: () => void
 }) {
+  const [enterKey, setEnterKey] = usePersisted<EnterChoice>(ENTER_KEY, 'auto')
+  const coarse = matchMedia('(pointer: coarse)').matches
   const sessions = useStore((s) => s.sessions)
   const runs = useStore((s) => s.runs)
   const metaMap = useStore((s) => s.meta)
@@ -462,19 +464,25 @@ export function Sidebar({
           {(close) => (
             <>
               <div className="menu-row"><span>{t('外观', 'Theme')}</span><Segmented value={theme} options={[['light', t('浅色', 'Light')], ['dark', t('深色', 'Dark')], ['system', t('跟随系统', 'Auto')]]} onChange={onTheme} /></div>
+              <div className="menu-row"><span>{t('回车键', 'Enter key')}</span><Segmented value={enterKey} options={[['auto', t('自动', 'Auto')], ['send', t('发送', 'Send')], ['newline', t('换行', 'New line')]]} onChange={setEnterKey} /></div>
+              <div className="menu-hint">{enterKey === 'newline' || (enterKey === 'auto' && coarse) ? t('回车换行，⌘/Ctrl+回车发送', 'Enter: new line · ⌘/Ctrl+Enter: send') : t('回车发送，Shift+回车换行', 'Enter: send · Shift+Enter: new line')}{enterKey === 'auto' && t('（自动：电脑上发送，手机上换行）', ' (Auto: send on a computer, new line on a phone)')}</div>
               <div className="menu-row"><span>{t('语言', 'Language')}</span><Segmented value={lang} options={[['zh', '中文'], ['en', 'English']]} onChange={(l) => { if (l !== lang) setLang(l) }} /></div>
-              <MenuSep />
-              <MenuLabel>{t('快捷键', 'Shortcuts')}</MenuLabel>
-              <div className="keys-list">
-                <span>{t('新会话', 'New session')}</span><kbd>{kbd('N')}</kbd>
-                <span>{t('搜索', 'Search')}</span><kbd>{kbd('K')}</kbd>
-                <span>{t('显示 / 收起侧栏', 'Toggle sidebar')}</span><kbd>{kbd('B')}</kbd>
-                <span>{t('边聊', 'Side chat')}</span><kbd>{kbd('.')}</kbd>
-                <span>{t('终端', 'Terminal')}</span><kbd>{kbd('J')}</kbd>
-                <span>{t('文件', 'Files')}</span><kbd>{kbd('E')}</kbd>
-                <span>{t('命令菜单', 'Command menu')}</span><kbd>/</kbd>
-                <span>{t('把命令发到终端', 'Send a command to the terminal')}</span><kbd>!</kbd>
-              </div>
+              {!coarse && (
+                <>
+                  <MenuSep />
+                  <MenuLabel>{t('快捷键', 'Shortcuts')}</MenuLabel>
+                  <div className="keys-list">
+                    <span>{t('新会话', 'New session')}</span><kbd>{kbd('N')}</kbd>
+                    <span>{t('搜索', 'Search')}</span><kbd>{kbd('K')}</kbd>
+                    <span>{t('显示 / 收起侧栏', 'Toggle sidebar')}</span><kbd>{kbd('B')}</kbd>
+                    <span>{t('边聊', 'Side chat')}</span><kbd>{kbd('.')}</kbd>
+                    <span>{t('终端', 'Terminal')}</span><kbd>{kbd('J')}</kbd>
+                    <span>{t('文件', 'Files')}</span><kbd>{kbd('E')}</kbd>
+                    <span>{t('命令菜单', 'Command menu')}</span><kbd>/</kbd>
+                    <span>{t('把命令发到终端', 'Send a command to the terminal')}</span><kbd>!</kbd>
+                  </div>
+                </>
+              )}
               <MenuSep />
               <MenuItem icon="machine" label={t('接入向导', 'Setup guide')} onClick={() => { close(); location.hash = '#/setup' }} />
               <MenuItem icon="external" label={t('在另一台设备上登录', 'Sign in on another device')} onClick={() => { close(); setDeviceLink(true) }} />

@@ -94,6 +94,33 @@ function Shell({ theme, setTheme }: { theme: ThemeChoice; setTheme: (t: ThemeCho
     setHomeUp(true)
     setHomeFocus((x) => x + 1)
   }, [])
+  // On a phone the list of sessions is the home screen: "back" from a conversation lands there.
+  const toList = useCallback(() => {
+    location.hash = '#/'
+    setShowSearch(false)
+    setHomeUp(false)
+  }, [])
+  const routeRef = useRef(route)
+  routeRef.current = route
+  // A swipe from the left edge goes back to the list, as in other phone apps.
+  useEffect(() => {
+    let x0 = -1, y0 = 0
+    const start = (e: TouchEvent) => {
+      const t = e.touches[0]
+      x0 = innerWidth <= 820 && e.touches.length === 1 && t.clientX < 28 ? t.clientX : -1
+      y0 = t.clientY
+    }
+    const end = (e: TouchEvent) => {
+      if (x0 < 0) return
+      const t = e.changedTouches[0]
+      const dx = t.clientX - x0, dy = Math.abs(t.clientY - y0)
+      x0 = -1
+      if (dx > 70 && dy < dx / 2 && (routeRef.current.key || routeRef.current.setup || document.querySelector('.app.home-up'))) toList()
+    }
+    window.addEventListener('touchstart', start, { passive: true })
+    window.addEventListener('touchend', end, { passive: true })
+    return () => { window.removeEventListener('touchstart', start); window.removeEventListener('touchend', end) }
+  }, [toList])
 
   // A new install opens on the setup guide, once: no machine can run anything yet, or nothing
   // has ever been run or marked from this page.
@@ -169,9 +196,9 @@ function Shell({ theme, setTheme }: { theme: ThemeChoice; setTheme: (t: ThemeCho
     <div className={'app' + (id ? ' has-session' : homeUp || route.setup ? ' home-up' : '') + (sidebar ? '' : ' no-sidebar')}>
       {sidebar && <Sidebar currentId={id} onOpen={(sid) => open(sid)} onNew={home} onSearch={() => setShowSearch(true)} theme={theme} onTheme={setTheme} onHide={() => setSidebar(false)} />}
       {id ? (
-        <SessionView key={id} id={id} focusOrd={route.ord} onBack={home} onOpen={open} onNew={home} onSearch={() => setShowSearch(true)} sidebarHidden={!sidebar} onShowSidebar={() => setSidebar(true)} />
+        <SessionView key={id} id={id} focusOrd={route.ord} onBack={toList} onOpen={open} onNew={home} onSearch={() => setShowSearch(true)} sidebarHidden={!sidebar} onShowSidebar={() => setSidebar(true)} />
       ) : route.setup ? (
-        <Setup onStart={home} onBack={() => { location.hash = '#/'; setHomeUp(false) }} />
+        <Setup onStart={home} onBack={toList} />
       ) : (
         <Home onOpen={open} onSearch={() => setShowSearch(true)} sidebarHidden={!sidebar} onShowSidebar={() => setSidebar(true)} focusSignal={homeFocus} onBack={() => setHomeUp(false)} />
       )}
